@@ -1,0 +1,34 @@
+.scroll-stack-section {
+  width: 100%;
+  position: relative;
+  overflow: visible;
+  padding-bottom: 2rem;
+}
+
+.scroll-stack-inner {
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+  position: relative;
+  min-height: 600px;
+}
+
+.scroll-stack-card {
+  width: 100%;
+  position: absolute;
+  top: 0;
+  left: 0;
+  will-change: transform, opacity, filter;
+  backface-visibility: hidden;
+  -webkit-font-smoothing: antialiased;
+  transform-style: preserve-3d;
+  perspective: 1000px;
+}
+
+/* Ensure the first card isn't hidden initially if needed, 
+   but GSAP timeline will handle the entry */
+.scroll-stack-card:first-child {
+  position: relative; /* Allow the container to take height from first card */
+}
+
+/* Base card styling is handled in app/page.js, this is just structural */

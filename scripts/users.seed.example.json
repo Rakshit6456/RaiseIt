@@ -1,0 +1,27 @@
+{
+  "users": [
+    {
+      "name": "Demo Student",
+      "email": "demo.student@iilm.edu",
+      "password": "Student@123",
+      "role": "student",
+      "studentId": "DEMO-STU-001",
+      "forcePasswordReset": false
+    },
+    {
+      "name": "Demo Department (IT)",
+      "email": "demo.department@iilm.edu",
+      "password": "Department@123",
+      "role": "department",
+      "department": "IT Department",
+      "forcePasswordReset": false
+    },
+    {
+      "name": "Demo Admin",
+      "email": "demo.admin@iilm.edu",
+      "password": "Admin@123",
+      "role": "admin",
+      "forcePasswordReset": false
+    }
+  ]
+}
