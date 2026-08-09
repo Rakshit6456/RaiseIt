@@ -14,7 +14,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card"
-import { Check, ChevronRight, ChevronLeft, User, Shield, Building2 } from "lucide-react"
+import { Check, ChevronRight, ChevronLeft, User, Building2 } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
 import { db } from "@/lib/firebase"
 import { doc, setDoc, serverTimestamp } from "firebase/firestore"
@@ -39,7 +39,6 @@ export function RegisterForm() {
         password: "",
         confirmPassword: "",
         studentId: "",
-        adminCode: ""
     })
 
     const handleChange = (e) => {
@@ -135,48 +134,37 @@ export function RegisterForm() {
                 <form onSubmit={handleSubmit}>
                     {/* Step 1: Role Selection */}
                     {step === 1 && (
-                        <div className="grid grid-cols-3 gap-3 py-4">
-                            <button
-                                type="button"
-                                onClick={() => setRole(AUTH_POLICY.roles.student)}
-                                className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${role === AUTH_POLICY.roles.student
-                                    ? "border-primary bg-primary/5 text-primary scale-105"
-                                    : "border-muted hover:border-muted-foreground/50 text-muted-foreground"
-                                    }`}
-                            >
-                                <div className="p-2 bg-background rounded-full shadow-sm mb-2">
-                                    <User className="w-6 h-6" />
-                                </div>
-                                <span className="text-sm font-semibold">Student</span>
-                            </button>
+                        <div className="space-y-3 py-4">
+                            <div className="grid grid-cols-2 gap-3">
+                                <button
+                                    type="button"
+                                    onClick={() => setRole(AUTH_POLICY.roles.student)}
+                                    className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${role === AUTH_POLICY.roles.student
+                                        ? "border-primary bg-primary/5 text-primary scale-105"
+                                        : "border-muted hover:border-muted-foreground/50 text-muted-foreground"
+                                        }`}
+                                >
+                                    <div className="p-2 bg-background rounded-full shadow-sm mb-2">
+                                        <User className="w-6 h-6" />
+                                    </div>
+                                    <span className="text-sm font-semibold">Student</span>
+                                </button>
 
-                            <button
-                                type="button"
-                                onClick={() => setRole(AUTH_POLICY.roles.department)}
-                                className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${role === AUTH_POLICY.roles.department
-                                    ? "border-primary bg-primary/5 text-primary scale-105"
-                                    : "border-muted hover:border-muted-foreground/50 text-muted-foreground"
-                                    }`}
-                            >
-                                <div className="p-2 bg-background rounded-full shadow-sm mb-2">
-                                    <Building2 className="w-6 h-6" />
-                                </div>
-                                <span className="text-sm font-semibold">Dept</span>
-                            </button>
-
-                            <button
-                                type="button"
-                                onClick={() => setRole(AUTH_POLICY.roles.admin)}
-                                className={`flex flex-col items-center justify-center p-4 rounded-xl border-2 transition-all ${role === AUTH_POLICY.roles.admin
-                                    ? "border-primary bg-primary/5 text-primary scale-105"
-                                    : "border-muted hover:border-muted-foreground/50 text-muted-foreground"
-                                    }`}
-                            >
-                                <div className="p-2 bg-background rounded-full shadow-sm mb-2">
-                                    <Shield className="w-6 h-6" />
-                                </div>
-                                <span className="text-sm font-semibold">Admin</span>
-                            </button>
+                                <button
+                                    type="button"
+                                    disabled
+                                    title="Department accounts must be created by an admin"
+                                    className="flex flex-col items-center justify-center p-4 rounded-xl border-2 border-muted text-muted-foreground/50 cursor-not-allowed opacity-60"
+                                >
+                                    <div className="p-2 bg-background rounded-full shadow-sm mb-2">
+                                        <Building2 className="w-6 h-6" />
+                                    </div>
+                                    <span className="text-sm font-semibold">Dept</span>
+                                </button>
+                            </div>
+                            <p className="text-xs text-muted-foreground text-center">
+                                Department and Admin accounts can only be created by an existing administrator. This form is for student self-registration only.
+                            </p>
                         </div>
                     )}
 
@@ -201,7 +189,7 @@ export function RegisterForm() {
                                         id="email"
                                         name="email"
                                         type="text"
-                                        placeholder={role === AUTH_POLICY.roles.student ? "john" : "admin"}
+                                        placeholder="john"
                                         value={formData.email.split('@')[0]}
                                         onChange={(e) => {
                                             if (e.target.value.includes("@")) {
@@ -256,37 +244,20 @@ export function RegisterForm() {
                     {/* Step 3: Specific Verification */}
                     {step === 3 && (
                         <div className="space-y-6 py-4">
-                            {role === AUTH_POLICY.roles.student ? (
-                                <div className="space-y-3">
-                                    <Label htmlFor="studentId">Student ID / Enrollment Number</Label>
-                                    <Input
-                                        id="studentId"
-                                        name="studentId"
-                                        placeholder="e.g. 2023CSB101"
-                                        value={formData.studentId}
-                                        onChange={handleChange}
-                                        required
-                                    />
-                                    <p className="text-[0.8rem] text-muted-foreground">
-                                        We will verify this ID against our university records.
-                                    </p>
-                                </div>
-                            ) : (
-                                <div className="space-y-3">
-                                    <Label htmlFor="adminCode">Admin Access</Label>
-                                    <Input
-                                        id="adminCode"
-                                        name="adminCode"
-                                        placeholder="Account is created by super admin"
-                                        value={formData.adminCode}
-                                        onChange={handleChange}
-                                        disabled
-                                    />
-                                    <p className="text-[0.8rem] text-muted-foreground">
-                                        Admin and department users must be provisioned by an existing admin.
-                                    </p>
-                                </div>
-                            )}
+                            <div className="space-y-3">
+                                <Label htmlFor="studentId">Student ID / Enrollment Number</Label>
+                                <Input
+                                    id="studentId"
+                                    name="studentId"
+                                    placeholder="e.g. 2023CSB101"
+                                    value={formData.studentId}
+                                    onChange={handleChange}
+                                    required
+                                />
+                                <p className="text-[0.8rem] text-muted-foreground">
+                                    We will verify this ID against our university records.
+                                </p>
+                            </div>
 
                             <div className="bg-primary/5 p-4 rounded-md border border-primary/20 flex gap-3 items-start">
                                 <div className="mt-1 bg-primary/10 p-1 rounded-full">
@@ -294,7 +265,7 @@ export function RegisterForm() {
                                 </div>
                                 <div className="text-sm">
                                     <p className="font-semibold text-foreground">Terms & Conditions</p>
-                                    <p className="text-muted-foreground">By creating an account, you agree to the university's code of conduct and privacy policy.</p>
+                                    <p className="text-muted-foreground">By creating an account, you agree to the university&apos;s code of conduct and privacy policy.</p>
                                 </div>
                             </div>
                         </div>
