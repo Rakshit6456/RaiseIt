@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { db } from "@/lib/firebase";
+import { adminDb } from "@/lib/firebase-admin";
 import cloudinary from "@/lib/cloudinary";
-import { collection, addDoc, doc, updateDoc, query, where, getDocs, arrayUnion } from "firebase/firestore";
+import { FieldValue } from "firebase-admin/firestore";
 
 // Simple native profanity filter
 const PROFANITY_WORDS = ["fuck", "shit", "bitch", "asshole", "cunt", "dick", "pussy", "bastard", "slut", "whore", "fag", "nigger", "nigga"];
@@ -68,16 +68,17 @@ export async function POST(request) {
       );
     }
 
-    if (!db) {
-      console.error("Firebase database not initialized");
+    if (!adminDb) {
+      console.error("Firebase Admin database not initialized");
       return NextResponse.json({ success: false, message: "Database not initialized" }, { status: 500 });
     }
 
     // --- Daily Submission Limit (5 complaints/day/user) ---
     if (userId && userId !== "unknown") {
-      const submissionsSnap = await getDocs(
-        query(collection(db, "complaintSubmissions"), where("userId", "==", userId))
-      );
+      const submissionsSnap = await adminDb
+        .collection("complaintSubmissions")
+        .where("userId", "==", userId)
+        .get();
       const startOfToday = new Date();
       startOfToday.setHours(0, 0, 0, 0);
       const submissionsToday = submissionsSnap.docs.filter(
@@ -99,13 +100,11 @@ export async function POST(request) {
     let matchedComplaintId = null;
     let matchedComplaintData = null;
     if (building) {
-      const candidatesSnap = await getDocs(
-        query(
-          collection(db, "complaints"),
-          where("category", "==", category),
-          where("location.building", "==", building)
-        )
-      );
+      const candidatesSnap = await adminDb
+        .collection("complaints")
+        .where("category", "==", category)
+        .where("location.building", "==", building)
+        .get();
 
       const newTokens = tokenize(`${title} ${description}`);
       let bestScore = 0;
@@ -233,17 +232,17 @@ export async function POST(request) {
         const updatePayload = {
           severity: escalatedSeverity,
           duplicateCount: (matchedComplaintData.duplicateCount || 0) + 1,
-          duplicateReporters: arrayUnion(userId),
-          timeline: arrayUnion(timelineEvent),
+          duplicateReporters: FieldValue.arrayUnion(userId),
+          timeline: FieldValue.arrayUnion(timelineEvent),
         };
         if (uploadedUrls.length > 0) {
-          updatePayload.images = arrayUnion(...uploadedUrls);
+          updatePayload.images = FieldValue.arrayUnion(...uploadedUrls);
         }
 
-        await updateDoc(doc(db, "complaints", matchedComplaintId), updatePayload);
+        await adminDb.collection("complaints").doc(matchedComplaintId).update(updatePayload);
         responseMessage = `This matches an existing complaint. Your report was merged and its severity escalated to ${escalatedSeverity}.`;
       } else {
-        await addDoc(collection(db, "complaints"), {
+        await adminDb.collection("complaints").add({
           userId,
           userEmail,
           title,
@@ -264,7 +263,7 @@ export async function POST(request) {
       }
 
       if (userId && userId !== "unknown") {
-        await addDoc(collection(db, "complaintSubmissions"), {
+        await adminDb.collection("complaintSubmissions").add({
           userId,
           createdAt: new Date().toISOString(),
         });
