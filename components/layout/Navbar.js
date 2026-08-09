@@ -2,11 +2,11 @@
 
 import { useState, useRef, useEffect } from "react"
 import { useAuth } from "@/context/AuthContext"
-import { LogOut, User, Settings, ChevronDown } from "lucide-react"
+import { LogOut, User, Settings, ChevronDown, Menu } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 
-export function Navbar() {
+export function Navbar({ onMenuClick }) {
     const { currentUser, userData, logout } = useAuth()
     const router = useRouter()
     const [isOpen, setIsOpen] = useState(false)
@@ -45,9 +45,19 @@ export function Navbar() {
     }
 
     return (
-        <header className="h-16 border-b bg-card flex items-center px-6 justify-between sticky top-0 z-50 shadow-sm">
-            <div className="font-medium text-lg text-muted-foreground animate-in fade-in slide-in-from-left-4 duration-500">
-                Welcome, <span className="text-primary font-bold">{name}</span>
+        <header className="h-16 border-b bg-card flex items-center px-4 sm:px-6 justify-between sticky top-0 z-50 shadow-sm gap-3">
+            <div className="flex items-center gap-3 min-w-0">
+                <button
+                    onClick={onMenuClick}
+                    className="md:hidden shrink-0 p-2 -ml-2 rounded-lg text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                    aria-label="Open navigation menu"
+                >
+                    <Menu className="w-5 h-5" />
+                </button>
+                <div className="font-medium text-lg text-muted-foreground truncate animate-in fade-in slide-in-from-left-4 duration-500">
+                    <span className="hidden sm:inline">Welcome, </span>
+                    <span className="text-primary font-bold">{name}</span>
+                </div>
             </div>
 
             <div className="relative" ref={dropdownRef}>
