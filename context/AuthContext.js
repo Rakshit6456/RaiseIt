@@ -5,7 +5,9 @@ import {
     createUserWithEmailAndPassword,
     signInWithEmailAndPassword,
     signOut,
-    onAuthStateChanged
+    onAuthStateChanged,
+    setPersistence,
+    browserSessionPersistence,
 } from "firebase/auth";
 import { auth, db } from "@/lib/firebase";
 import { doc, onSnapshot } from "firebase/firestore";
@@ -61,6 +63,13 @@ export function AuthProvider({ children }) {
             setLoading(false);  // No Firebase → just show app as guest
             return;
         }
+
+        // Scope the session to this browser tab (sessionStorage) instead of the
+        // default localStorage, which is shared across all tabs of the same origin
+        // and was causing a sign-in in one tab to hijack every other open tab.
+        setPersistence(auth, browserSessionPersistence).catch((err) => {
+            console.error("Failed to set auth persistence:", err);
+        });
 
         const unsubscribe = onAuthStateChanged(auth, (user) => {
             setCurrentUser(user);
