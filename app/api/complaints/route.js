@@ -37,6 +37,51 @@ function textSimilarity(a, b) {
   return union === 0 ? 0 : intersection / union;
 }
 
+// Groq vision model; override with GROQ_MODEL in .env if this one is retired
+const GROQ_MODEL = process.env.GROQ_MODEL || "qwen/qwen3.8-27b";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Asks Groq whether the image matches the complaint, retrying briefly on rate-limit/5xx errors.
+// Returns { ok, answer } or { ok: false, unavailable, error }; "unavailable" means temporary.
+async function callGroq(prompt, mimeType, base64Data) {
+  const body = {
+    model: GROQ_MODEL,
+    temperature: 0,
+    max_tokens: 5,
+    messages: [{
+      role: "user",
+      content: [
+        { type: "text", text: prompt },
+        { type: "image_url", image_url: { url: `data:${mimeType};base64,${base64Data}` } },
+      ],
+    }],
+  };
+  let lastError = "Unknown Groq Error";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        body: JSON.stringify(body),
+      });
+      const data = await res.json();
+      if (res.ok) return { ok: true, answer: (data?.choices?.[0]?.message?.content || "").trim().toUpperCase() };
+      lastError = data?.error?.message || lastError;
+      if (res.status !== 429 && res.status < 500) return { ok: false, unavailable: false, error: lastError };
+      // Free tier is token-per-minute limited: wait out the window Groq asks for (capped)
+      const retryAfter = Number(res.headers.get("retry-after"));
+      if (res.status === 429 && retryAfter > 0) {
+        await sleep(Math.min(retryAfter, 20) * 1000);
+        continue;
+      }
+    } catch (e) {
+      lastError = e.message;
+    }
+    await sleep(800 * (attempt + 1));
+  }
+  return { ok: false, unavailable: true, error: lastError };
+}
+
 export async function POST(request) {
   try {
     const formData = await request.formData();
@@ -138,56 +183,29 @@ export async function POST(request) {
           const buffer = Buffer.from(arrayBuffer);
           const mimeType = file.type || 'image/jpeg';
 
-          // --- AI Image Validation (Gemini) ---
-          if (process.env.GEMINI_API_KEY) {
-            const base64Data = buffer.toString('base64');
-            const payload = {
-              contents: [{
-                parts: [
-                  { text: `You are an auditor verifying user complaints. The user claims this is a problem regarding: '${category}'. Their exact description is: '${description}'. Does this image depict the problem described? Answer with exactly YES or NO.` },
-                  { inlineData: { mimeType: mimeType, data: base64Data } }
-                ]
-              }]
-            };
+          // --- AI Image Validation (Groq) ---
+          if (process.env.GROQ_API_KEY) {
+            const prompt = `You are a strict auditor verifying campus infrastructure complaints. Complaint category: '${category}'. Title: '${title}'. Description: '${description}'. Look at the image. Does it show a real photograph of the specific problem described (the same kind of object/fault)? Answer NO if it is a poster, logo, movie/game artwork, screenshot, meme, selfie, or any unrelated picture. Answer with exactly YES or NO.`;
+            const groq = await callGroq(prompt, mimeType, buffer.toString("base64"));
 
-            try {
-              const geminiRes = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${process.env.GEMINI_API_KEY}`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-              });
-              const geminiData = await geminiRes.json();
-              
-              if (!geminiRes.ok) {
-                console.error("Gemini API Error Response:", JSON.stringify(geminiData));
-                return NextResponse.json({ 
-                   success: false, 
-                   message: `AI Image System Error: ${geminiData?.error?.message || "Unknown Gemini Error"}` 
+            if (groq.ok) {
+              console.log("Groq Parsed Answer:", groq.answer);
+
+              if (!groq.answer.startsWith("YES")) {
+                return NextResponse.json({
+                  success: false,
+                  message: "The uploaded image does not appear to match your description. Please upload a relevant picture."
                 }, { status: 400 });
               }
-
-              console.log("Gemini Raw Response:", JSON.stringify(geminiData));
-
-              const answer = geminiData?.candidates?.[0]?.content?.parts?.[0]?.text?.trim()?.toUpperCase() || "";
-              console.log("Gemini Parsed Answer:", answer);
-              
-              if (!answer.includes("YES") && answer.includes("NO")) {
-                 return NextResponse.json({ 
-                   success: false, 
-                   message: "The uploaded image does not appear to match your description. Please upload a relevant picture." 
-                 }, { status: 400 });
-              } else if (!answer) {
-                 return NextResponse.json({ 
-                   success: false, 
-                   message: "AI could not determine image relevance." 
-                 }, { status: 400 });
-              }
-            } catch (geminiError) {
-              console.error("Gemini Validation Error:", geminiError);
-              return NextResponse.json({ 
-                   success: false, 
-                   message: `AI Verification Failed Internally: ${geminiError.message}` 
-                 }, { status: 500 });
+            } else if (groq.unavailable) {
+              // Groq is rate-limited/down: don't block the student, accept the photo unverified
+              console.warn("Groq unavailable, skipping image verification:", groq.error);
+            } else {
+              console.error("Groq API Error:", groq.error);
+              return NextResponse.json({
+                success: false,
+                message: `AI Image System Error: ${groq.error}`
+              }, { status: 400 });
             }
           }
           // --- End AI Validation ---

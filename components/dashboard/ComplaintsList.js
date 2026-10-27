@@ -41,7 +41,7 @@ export function ComplaintsList({ isAdmin = false }) {
         return matchesSearch && matchesStatus && matchesCategory
     })
 
-    const linkPath = isAdmin ? "/admin/complaints" : "/student/complaints"
+    const linkPath = isAdmin ? "/admin/issues" : "/forum"
 
     return (
         <div className="space-y-4">

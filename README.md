@@ -15,7 +15,7 @@ RaiseIt is a campus complaint management platform built for IILM University. Stu
 
 - **3-Role Access Control**: dedicated dashboards and portals for Students, Departments, and Admins.
 - **Secure Authentication**: institution-only (`@iilm.edu`) sign-in via Firebase Authentication, with admin-controlled account provisioning.
-- **AI Image Verification**: every uploaded photo is checked by Gemini to confirm it actually depicts the reported issue before the complaint is accepted.
+- **AI Image Verification**: every uploaded photo is checked by Groq vision AI to confirm it actually depicts the reported issue before the complaint is accepted.
 - **Duplicate Detection & Severity Escalation**: similar reports from the same category/building are automatically merged into one complaint instead of creating clutter, escalating its severity (Low → Medium → High → Critical) with each new match.
 - **Fair-Use Daily Limit**: each student can submit up to 5 complaints per day to keep the queue meaningful.
 - **Community Forum**: students browse, upvote, and comment on reported issues; hot/new/top sorting and category/authority filters.
@@ -33,7 +33,7 @@ RaiseIt is a campus complaint management platform built for IILM University. Stu
 - **Icons**: [Lucide React](https://lucide.dev/)
 - **Backend/Auth**: [Firebase](https://firebase.google.com/) (Auth + Firestore, client & admin SDKs)
 - **Image Hosting**: [Cloudinary](https://cloudinary.com/)
-- **AI Verification**: [Google Gemini API](https://ai.google.dev/) (image-to-description matching)
+- **AI Verification**: [Groq API](https://console.groq.com/) (Qwen vision, image-to-description matching)
 - **UI Components**: Radix UI primitives
 - **Charts**: Recharts
 
@@ -90,8 +90,9 @@ CLOUDINARY_CLOUD_NAME=your_cloud_name
 CLOUDINARY_API_KEY=your_api_key
 CLOUDINARY_API_SECRET=your_api_secret
 
-# Gemini (AI image verification — optional; skipped if unset)
-GEMINI_API_KEY=your_gemini_api_key
+# Groq (AI image verification — optional; skipped if unset)
+GROQ_API_KEY=your_groq_api_key
+
 ```
 
 ## 🔐 Permanent Firebase Authentication Setup (IILM)
