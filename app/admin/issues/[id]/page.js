@@ -4,6 +4,7 @@ import { useState, useEffect } from "react"
 import { useParams, useRouter } from "next/navigation"
 import { useComplaints } from "@/context/ComplaintContext"
 import { useAuth } from "@/context/AuthContext"
+import { WorkOrderPanel } from "@/components/admin/WorkOrderPanel"
 import { DashboardShell } from "@/components/layout/DashboardShell"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -177,6 +178,8 @@ export default function AdminIssuePage() {
 
             <div className="flex gap-6 items-start">
                 <div className="flex-1 min-w-0 space-y-6">
+
+                    <WorkOrderPanel complaint={complaint} />
 
                     <div className={`border rounded-xl overflow-hidden bg-card ${isResolved ? "border-green-300" : ""}`}>
                         <div className="flex">

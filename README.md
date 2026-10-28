@@ -112,7 +112,8 @@ Follow these steps to enforce institution-only authentication and admin-controll
     - Users can otherwise be created by an admin via the secure API or seed script.
 
 4. **Create first admin account (bootstrap)**
-    - In Firebase Console → Authentication → Users, create your first admin manually (must be `@iilm.edu`).
+    - Prefer provisioning the first admin with `scripts/seed-users.mjs`, which sets both the Firestore profile and the server-managed Firebase `role: "admin"` custom claim.
+    - If creating the account manually, also set the `role: "admin"` custom claim with a trusted Firebase Admin SDK process. An `admin` value in the Firestore profile alone is not sufficient for privileged API access.
     - In Firestore, create `users/{uid}` with:
        - `role: "admin"`
        - `name`, `email`, `active: true`
@@ -159,7 +160,9 @@ Follow these steps to enforce institution-only authentication and admin-controll
           match /users/{userId} {
              allow read: if isSignedIn() && request.auth.uid == userId || isAdmin();
              allow create: if isAdmin();
-             allow update: if isAdmin() || request.auth.uid == userId;
+             allow update: if isAdmin() || (request.auth.uid == userId &&
+                request.resource.data.role == resource.data.role &&
+                request.resource.data.active == resource.data.active);
              allow delete: if isAdmin();
           }
 

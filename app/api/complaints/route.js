@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import cloudinary from "@/lib/cloudinary";
 import { FieldValue } from "firebase-admin/firestore";
+import { authenticateApiRequest } from "@/lib/api-auth";
+import { MAX_COMPLAINT_IMAGES, MAX_IMAGE_SIZE_BYTES, readValidatedImage } from "@/lib/image-validation";
+import { parseFormDataLimited, RequestBodyError } from "@/lib/request-body";
+import { COMPLAINT_CATEGORIES, isComplaintAuthority } from "@/lib/complaint-options";
+
+export const runtime = "nodejs";
 
 // Simple native profanity filter
 const PROFANITY_WORDS = ["fuck", "shit", "bitch", "asshole", "cunt", "dick", "pussy", "bastard", "slut", "whore", "fag", "nigger", "nigga"];
@@ -18,6 +24,7 @@ const DAILY_COMPLAINT_LIMIT = 5;
 const CLOSED_STATUSES = new Set(["resolved", "rejected", "closed"]);
 const SEVERITY_LEVELS = ["Low", "Medium", "High", "Critical"];
 const DUPLICATE_SIMILARITY_THRESHOLD = 0.35;
+const PRIORITIES = new Set(["Low", "Medium", "High", "Critical"]);
 
 function nextSeverity(current) {
   const idx = SEVERITY_LEVELS.indexOf(current || "Low");
@@ -58,16 +65,23 @@ async function callGroq(prompt, mimeType, base64Data) {
   };
   let lastError = "Unknown Groq Error";
   for (let attempt = 0; attempt < 3; attempt++) {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 25_000);
     try {
       const res = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${process.env.GROQ_API_KEY}` },
+        signal: controller.signal,
         body: JSON.stringify(body),
       });
-      const data = await res.json();
-      if (res.ok) return { ok: true, answer: (data?.choices?.[0]?.message?.content || "").trim().toUpperCase() };
-      lastError = data?.error?.message || lastError;
-      if (res.status !== 429 && res.status < 500) return { ok: false, unavailable: false, error: lastError };
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const answer = (data?.choices?.[0]?.message?.content || "").trim().toUpperCase();
+        if (answer.startsWith("YES") || answer.startsWith("NO")) return { ok: true, answer };
+        return { ok: false, unavailable: true, error: "Groq returned an invalid verification response" };
+      }
+      lastError = "Groq request failed";
+      if (res.status !== 429 && res.status < 500) return { ok: false, unavailable: true, error: lastError };
       // Free tier is token-per-minute limited: wait out the window Groq asks for (capped)
       const retryAfter = Number(res.headers.get("retry-after"));
       if (res.status === 429 && retryAfter > 0) {
@@ -75,7 +89,9 @@ async function callGroq(prompt, mimeType, base64Data) {
         continue;
       }
     } catch (e) {
-      lastError = e.message;
+      lastError = e?.name === "AbortError" ? "Groq request timed out" : "Groq request failed";
+    } finally {
+      clearTimeout(timeout);
     }
     await sleep(800 * (attempt + 1));
   }
@@ -84,18 +100,30 @@ async function callGroq(prompt, mimeType, base64Data) {
 
 export async function POST(request) {
   try {
-    const formData = await request.formData();
+    const auth = await authenticateApiRequest(request, ["student", "department"]);
+    if (auth.error) {
+      return NextResponse.json({ success: false, message: auth.error.message }, { status: auth.error.status });
+    }
 
-    const title = formData.get("title") || "";
-    const description = formData.get("description") || "";
-    const category = formData.get("category") || "";
-    const building = formData.get("building") || "";
-    const floor = formData.get("floor") || "";
-    const room = formData.get("room") || "";
-    const anonymousRaw = formData.get("anonymous") || "false";
-    const taggedAuthority = formData.get("taggedAuthority") || "";
-    const userId = formData.get("userId") || "unknown";
-    const userEmail = formData.get("userEmail") || "unknown";
+    const formData = await parseFormDataLimited(request, 12 * 1024 * 1024 + 128 * 1024);
+
+    const title = String(formData.get("title") || "").trim();
+    const description = String(formData.get("description") || "").trim();
+    const category = String(formData.get("category") || "");
+    const building = String(formData.get("building") || "").trim();
+    const floor = String(formData.get("floor") || "").trim();
+    const room = String(formData.get("room") || "").trim();
+    const anonymousRaw = String(formData.get("anonymous") || "false");
+    const taggedAuthority = String(formData.get("taggedAuthority") || "");
+    const userId = auth.user.uid;
+    const userEmail = auth.user.email;
+    const asset = String(formData.get("asset") || "").trim().slice(0, 100);
+    const severityScoreRaw = Number(formData.get("severityScore") || 3);
+    const severityScore = Number.isInteger(severityScoreRaw) && severityScoreRaw >= 1 && severityScoreRaw <= 5 ? severityScoreRaw : 3;
+    const priorityRaw = String(formData.get("priority") || "Medium");
+    const priority = PRIORITIES.has(priorityRaw) ? priorityRaw : "Medium";
+    const safetyConcern = formData.get("safetyConcern") === "true";
+    const analysisReasoning = String(formData.get("analysisReasoning") || "").trim().slice(0, 280);
 
     // Validate required fields
     if (!title || !description || !category) {
@@ -103,6 +131,18 @@ export async function POST(request) {
         { success: false, message: "Missing required fields: title, description, and category are required." },
         { status: 400 }
       );
+    }
+    if (!COMPLAINT_CATEGORIES.includes(String(category))) {
+      return NextResponse.json({ success: false, message: "Choose a supported complaint category." }, { status: 400 });
+    }
+    if (title.length > 120 || description.length > 2000 || building.length > 120 || floor.length > 80 || room.length > 80) {
+      return NextResponse.json({ success: false, message: "One or more report fields are too long." }, { status: 400 });
+    }
+    if (!building || !floor || !room) {
+      return NextResponse.json({ success: false, message: "Complete building, floor, and room details are required." }, { status: 400 });
+    }
+    if (taggedAuthority && !isComplaintAuthority(taggedAuthority)) {
+      return NextResponse.json({ success: false, message: "Choose a supported maintenance authority." }, { status: 400 });
     }
 
     // Profanity Filter Check
@@ -113,13 +153,8 @@ export async function POST(request) {
       );
     }
 
-    if (!adminDb) {
-      console.error("Firebase Admin database not initialized");
-      return NextResponse.json({ success: false, message: "Database not initialized" }, { status: 500 });
-    }
-
     // --- Daily Submission Limit (5 complaints/day/user) ---
-    if (userId && userId !== "unknown") {
+    {
       const submissionsSnap = await adminDb
         .collection("complaintSubmissions")
         .where("userId", "==", userId)
@@ -172,16 +207,24 @@ export async function POST(request) {
       }
     }
 
-    const files = formData.getAll("file") || [];
+    const files = (formData.getAll("file") || []).filter(file => file && file.size > 0);
+    if (files.length > MAX_COMPLAINT_IMAGES) {
+      return NextResponse.json({ success: false, message: `You can attach up to ${MAX_COMPLAINT_IMAGES} images.` }, { status: 400 });
+    }
+    if (files.some(file => file.size > MAX_IMAGE_SIZE_BYTES) || files.reduce((sum, file) => sum + file.size, 0) > 12 * 1024 * 1024) {
+      return NextResponse.json({ success: false, message: "Each image must be 5 MB or smaller and all images together must be 12 MB or smaller." }, { status: 413 });
+    }
     const uploadedUrls = [];
 
     // Upload files to Cloudinary
     for (const file of files) {
       if (file && file.size > 0) {
         try {
-          const arrayBuffer = await file.arrayBuffer();
-          const buffer = Buffer.from(arrayBuffer);
-          const mimeType = file.type || 'image/jpeg';
+          const validatedImage = await readValidatedImage(file);
+          if (validatedImage.error) {
+            return NextResponse.json({ success: false, message: validatedImage.error }, { status: 400 });
+          }
+          const { buffer, mimeType } = validatedImage;
 
           // --- AI Image Validation (Groq) ---
           if (process.env.GROQ_API_KEY) {
@@ -201,11 +244,11 @@ export async function POST(request) {
               // Groq is rate-limited/down: don't block the student, accept the photo unverified
               console.warn("Groq unavailable, skipping image verification:", groq.error);
             } else {
-              console.error("Groq API Error:", groq.error);
+              console.error("Groq image verification failed.");
               return NextResponse.json({
                 success: false,
-                message: `AI Image System Error: ${groq.error}`
-              }, { status: 400 });
+                message: "Image verification is temporarily unavailable. Please retry or remove the photo and submit manually."
+              }, { status: 502 });
             }
           }
           // --- End AI Validation ---
@@ -225,9 +268,9 @@ export async function POST(request) {
             uploadedUrls.push(uploadResult.secure_url);
           }
         } catch (uploadError) {
-          console.error("Cloudinary upload error:", uploadError);
+          console.error("Cloudinary image upload failed.", uploadError?.name || "Unknown error");
           return NextResponse.json(
-            { success: false, message: `Image upload failed: ${uploadError.message}` },
+            { success: false, message: "Image upload failed. Please retry." },
             { status: 500 }
           );
         }
@@ -249,10 +292,18 @@ export async function POST(request) {
 
         const updatePayload = {
           severity: escalatedSeverity,
+          severityScore: Math.max(Number(matchedComplaintData.severityScore) || 1, severityScore),
+          priority: ["Low", "Medium", "High", "Critical"][Math.max(
+            ["Low", "Medium", "High", "Critical"].indexOf(matchedComplaintData.priority || "Low"),
+            ["Low", "Medium", "High", "Critical"].indexOf(priority)
+          )],
+          safetyConcern: matchedComplaintData.safetyConcern === true || safetyConcern,
           duplicateCount: (matchedComplaintData.duplicateCount || 0) + 1,
           duplicateReporters: FieldValue.arrayUnion(userId),
           timeline: FieldValue.arrayUnion(timelineEvent),
         };
+        if (!matchedComplaintData.asset && asset) updatePayload.asset = asset;
+        if (analysisReasoning) updatePayload.analysisReasoning = analysisReasoning;
         if (uploadedUrls.length > 0) {
           updatePayload.images = FieldValue.arrayUnion(...uploadedUrls);
         }
@@ -269,7 +320,12 @@ export async function POST(request) {
           location: { building, floor, room },
           images: uploadedUrls,
           status: "pending",
-          severity: "Low",
+          severity: severityScore <= 1 ? "Low" : severityScore <= 3 ? "Medium" : severityScore === 4 ? "High" : "Critical",
+          severityScore,
+          priority,
+          asset,
+          safetyConcern,
+          ...(analysisReasoning ? { analysisReasoning } : {}),
           duplicateCount: 0,
           duplicateReporters: [],
           createdAt: new Date().toISOString(),
@@ -280,25 +336,26 @@ export async function POST(request) {
         });
       }
 
-      if (userId && userId !== "unknown") {
-        await adminDb.collection("complaintSubmissions").add({
-          userId,
-          createdAt: new Date().toISOString(),
-        });
-      }
+      await adminDb.collection("complaintSubmissions").add({
+        userId,
+        createdAt: new Date().toISOString(),
+      });
     } catch (firestoreError) {
-      console.error("Firestore save error:", firestoreError);
+      console.error("Complaint persistence failed.", firestoreError?.code || firestoreError?.name || "Unknown error");
       return NextResponse.json(
-        { success: false, message: `Failed to save complaint: ${firestoreError.message}` },
+        { success: false, message: "Failed to save complaint. Please retry." },
         { status: 500 }
       );
     }
 
     return NextResponse.json({ success: true, merged: Boolean(matchedComplaintId), message: responseMessage });
   } catch (error) {
-    console.error("/api/complaints error:", error);
+    if (error instanceof RequestBodyError) {
+      return NextResponse.json({ success: false, message: error.message }, { status: error.status });
+    }
+    console.error("Complaint request failed.", error?.name || "Unknown error");
     return NextResponse.json(
-      { success: false, message: `Server error: ${error.message || "Unknown error"}` },
+      { success: false, message: "The complaint request failed. Please retry." },
       { status: 500 }
     );
   }

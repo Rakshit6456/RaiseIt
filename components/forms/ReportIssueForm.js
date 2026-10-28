@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,8 +14,9 @@ import {
     SelectValue,
 } from "@/components/ui/select"
 import { Card, CardContent, CardFooter, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
-import { Upload, X } from "lucide-react"
+import { AlertTriangle, Loader2, Sparkles, Upload, X } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
+import { COMPLAINT_AUTHORITIES } from "@/lib/complaint-options"
 
 export function ReportIssueForm() {
     const router = useRouter()
@@ -23,6 +24,11 @@ export function ReportIssueForm() {
     const [error, setError] = useState("")
     const [images, setImages] = useState([])
     const [files, setFiles] = useState([])
+    const [analysisLoading, setAnalysisLoading] = useState(false)
+    const [analysisError, setAnalysisError] = useState("")
+    const [analysisSummary, setAnalysisSummary] = useState("")
+    const [analysisEvidence, setAnalysisEvidence] = useState("")
+    const previousAiSuggestion = useRef(null)
     const { currentUser } = useAuth()
 
     // Form State
@@ -32,6 +38,11 @@ export function ReportIssueForm() {
     const [floor, setFloor] = useState("")
     const [room, setRoom] = useState("")
     const [description, setDescription] = useState("")
+    const [asset, setAsset] = useState("")
+    const [severityScore, setSeverityScore] = useState(3)
+    const [priority, setPriority] = useState("Medium")
+    const [safetyConcern, setSafetyConcern] = useState(false)
+    const [analysisReasoning, setAnalysisReasoning] = useState("")
     const [anonymous, setAnonymous] = useState(false)
     const [taggedAuthority, setTaggedAuthority] = useState("")
 
@@ -42,17 +53,108 @@ export function ReportIssueForm() {
 
     const handleImageUpload = (e) => {
         const selectedFiles = Array.from(e.target.files)
-        if (selectedFiles.length > 0) {
-            // Mock preview URLs
-            const newImages = selectedFiles.map(file => URL.createObjectURL(file))
-            setImages(prev => [...prev, ...newImages])
-            setFiles(prev => [...prev, ...selectedFiles])
+        e.target.value = ""
+        if (!selectedFiles.length) return
+
+        const validFiles = selectedFiles.filter(file =>
+            ["image/jpeg", "image/png", "image/webp"].includes(file.type) && file.size <= 5 * 1024 * 1024
+        )
+        const remaining = Math.max(0, 3 - files.length)
+        if (validFiles.length < selectedFiles.length) {
+            setError("Use JPEG, PNG, or WebP images no larger than 5 MB each.")
+        } else if (validFiles.length > remaining) {
+            setError("You can attach up to 3 images.")
+        } else {
+            setError("")
+        }
+        const acceptedFiles = validFiles.slice(0, remaining)
+        if (acceptedFiles.length > 0) {
+            setAnalysisError("")
+            setImages(prev => [...prev, ...acceptedFiles.map(file => URL.createObjectURL(file))])
+            setFiles(prev => [...prev, ...acceptedFiles])
         }
     }
 
     const removeImage = (index) => {
+        URL.revokeObjectURL(images[index])
         setImages(prev => prev.filter((_, i) => i !== index))
         setFiles(prev => prev.filter((_, i) => i !== index))
+    }
+
+    const handleAnalyzeImage = async () => {
+        setAnalysisError("")
+        setAnalysisSummary("")
+        setAnalysisEvidence("")
+        if (!currentUser || currentUser.isGuest) {
+            setAnalysisError("Sign in with your campus account to analyze an image.")
+            return
+        }
+        if (!files[0]) {
+            setAnalysisError("Upload an image before starting analysis.")
+            return
+        }
+
+        setAnalysisLoading(true)
+        try {
+            const token = await currentUser.getIdToken()
+            const formData = new FormData()
+            formData.append("file", files[0])
+            const response = await fetch("/api/complaints/analyze", {
+                method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
+                body: formData,
+            })
+            const result = await response.json()
+            if (!response.ok) throw new Error(result.message || "Image analysis failed.")
+
+            const suggestion = result.analysis
+            if (suggestion.isUncertain) {
+                const previous = previousAiSuggestion.current
+                if (previous) {
+                    if (title === previous.title) setTitle("")
+                    if (description === previous.description) setDescription("")
+                    if (category === previous.category) setCategory("")
+                    if (asset === previous.asset) setAsset("")
+                    if (severityScore === previous.severity) setSeverityScore(3)
+                    if (priority === previous.priority) setPriority("Medium")
+                    if (safetyConcern === previous.safetyConcern) setSafetyConcern(false)
+                    if (analysisReasoning === previous.reasoningSummary) setAnalysisReasoning("")
+                    if (previous.recommendedDepartment && taggedAuthority === previous.recommendedDepartment) setTaggedAuthority("")
+                }
+                previousAiSuggestion.current = null
+                setAnalysisSummary("AI could not identify a clear fault. Please describe the issue manually; you can still submit this report.")
+                setAnalysisReasoning(suggestion.reasoningSummary || "")
+                return
+            }
+            previousAiSuggestion.current = {
+                title: suggestion.title || "",
+                description: suggestion.description || "",
+                category: suggestion.category || "",
+                asset: suggestion.asset || "",
+                severity: suggestion.severity || 3,
+                priority: suggestion.priority || "Medium",
+                safetyConcern: suggestion.safetyConcern === true,
+                reasoningSummary: suggestion.reasoningSummary || "",
+                recommendedDepartment: COMPLAINT_AUTHORITIES.includes(suggestion.recommendedDepartment) ? suggestion.recommendedDepartment : "",
+            }
+            setTitle(suggestion.title || "")
+            setDescription(suggestion.description || "")
+            if (suggestion.category) setCategory(suggestion.category)
+            setAsset(suggestion.asset || "")
+            setSeverityScore(suggestion.severity || 3)
+            setPriority(suggestion.priority || "Medium")
+            setSafetyConcern(suggestion.safetyConcern === true)
+            setAnalysisReasoning(suggestion.reasoningSummary || "")
+            setAnalysisEvidence(suggestion.visibleEvidence || "")
+            if (COMPLAINT_AUTHORITIES.includes(suggestion.recommendedDepartment)) {
+                setTaggedAuthority(suggestion.recommendedDepartment)
+            }
+            setAnalysisSummary("Suggestions are ready. Review and edit them before submitting.")
+        } catch (requestError) {
+            setAnalysisError(requestError.message || "Image analysis failed. You can continue manually or retry.")
+        } finally {
+            setAnalysisLoading(false)
+        }
     }
 
     const handleSubmit = async (e) => {
@@ -70,8 +172,14 @@ export function ReportIssueForm() {
             return
         }
 
+        if (!currentUser || currentUser.isGuest) {
+            setError("Please sign in with your campus account before submitting a report.")
+            return
+        }
+
         setLoading(true)
         try {
+            const token = await currentUser.getIdToken()
             const formData = new FormData()
             formData.append("title", title)
             formData.append("description", description)
@@ -81,8 +189,11 @@ export function ReportIssueForm() {
             formData.append("room", room)
             formData.append("anonymous", anonymous ? "true" : "false")
             formData.append("taggedAuthority", taggedAuthority)
-            formData.append("userId", currentUser?.uid || "unknown")
-            formData.append("userEmail", currentUser?.email || "unknown")
+            formData.append("asset", asset)
+            formData.append("severityScore", String(severityScore))
+            formData.append("priority", priority)
+            formData.append("safetyConcern", safetyConcern ? "true" : "false")
+            formData.append("analysisReasoning", analysisReasoning)
 
             for (const file of files) {
                 formData.append("file", file)
@@ -92,6 +203,7 @@ export function ReportIssueForm() {
 
             const res = await fetch("/api/complaints", {
                 method: "POST",
+                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             })
 
@@ -229,8 +341,46 @@ export function ReportIssueForm() {
                             <label className="flex flex-col items-center justify-center aspect-square rounded-md border-2 border-dashed border-muted hover:border-primary/50 hover:bg-muted/50 transition-colors cursor-pointer">
                                 <Upload className="w-6 h-6 text-muted-foreground mb-2" />
                                 <span className="text-xs text-muted-foreground text-center px-2">Click to Upload</span>
-                                <input type="file" className="hidden" multiple accept="image/*" onChange={handleImageUpload} />
+                                <input type="file" className="hidden" multiple accept="image/jpeg,image/png,image/webp" onChange={handleImageUpload} />
                             </label>
+                        </div>
+                        <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                            <p className="text-xs text-muted-foreground">Attach up to 3 JPEG, PNG, or WebP images (5 MB each).</p>
+                            <Button type="button" variant="outline" onClick={handleAnalyzeImage} disabled={analysisLoading || files.length === 0}>
+                                {analysisLoading ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Sparkles className="w-4 h-4 mr-2" />}
+                                {analysisLoading ? "Analyzing image..." : "Suggest details with AI"}
+                            </Button>
+                            {analysisSummary && <p className="text-sm text-green-700">{analysisSummary}</p>}
+                            {analysisError && <p role="alert" className="text-sm text-red-700">{analysisError}</p>}
+                            {analysisEvidence && <p className="text-sm text-muted-foreground">Visible evidence: {analysisEvidence}</p>}
+                            {analysisReasoning && <p className="text-sm text-muted-foreground">AI note: {analysisReasoning}</p>}
+                            {safetyConcern && <p className="text-sm text-amber-800 flex items-start gap-2"><AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" />The photo may show a safety concern. This is an estimate and needs human assessment.</p>}
+                        </div>
+                    </div>
+
+                    <div className="space-y-2">
+                        <Label htmlFor="asset">Affected asset (optional)</Label>
+                        <Input id="asset" placeholder="e.g. ceiling fan, projector, sink" value={asset} onChange={e => setAsset(e.target.value)} />
+                    </div>
+
+                    <div className="grid sm:grid-cols-2 gap-4">
+                        <div className="space-y-2">
+                            <Label htmlFor="severityScore">Estimated severity (1–5)</Label>
+                            <Select value={String(severityScore)} onValueChange={value => setSeverityScore(Number(value))}>
+                                <SelectTrigger id="severityScore"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {[1, 2, 3, 4, 5].map(value => <SelectItem key={value} value={String(value)}>{value}{value === 1 ? " — Minor" : value === 5 ? " — Urgent" : ""}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
+                        </div>
+                        <div className="space-y-2">
+                            <Label htmlFor="priority">Priority</Label>
+                            <Select value={priority} onValueChange={setPriority}>
+                                <SelectTrigger id="priority"><SelectValue /></SelectTrigger>
+                                <SelectContent>
+                                    {["Low", "Medium", "High", "Critical"].map(value => <SelectItem key={value} value={value}>{value}</SelectItem>)}
+                                </SelectContent>
+                            </Select>
                         </div>
                     </div>
 

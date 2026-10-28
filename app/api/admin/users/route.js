@@ -1,32 +1,16 @@
 import { NextResponse } from "next/server";
 import { adminAuth, adminDb } from "@/lib/firebase-admin";
+import { authenticateApiRequest } from "@/lib/api-auth";
 import {
     AUTH_POLICY,
     ensureInstitutionEmail,
     isAllowedInstitutionEmail,
 } from "@/lib/auth-policy";
 
-function getBearerToken(request) {
-    const header = request.headers.get("authorization") || "";
-    if (!header.startsWith("Bearer ")) return null;
-    return header.slice(7);
-}
-
 export async function POST(request) {
     try {
-        const token = getBearerToken(request);
-        if (!token) {
-            return NextResponse.json({ message: "Missing auth token" }, { status: 401 });
-        }
-
-        const decoded = await adminAuth.verifyIdToken(token);
-        const callerRef = adminDb.collection("users").doc(decoded.uid);
-        const callerDoc = await callerRef.get();
-        const callerRole = callerDoc.exists ? callerDoc.data()?.role : null;
-
-        if (callerRole !== AUTH_POLICY.roles.admin) {
-            return NextResponse.json({ message: "Admin access required" }, { status: 403 });
-        }
+        const auth = await authenticateApiRequest(request, [AUTH_POLICY.roles.admin]);
+        if (auth.error) return NextResponse.json({ message: auth.error.message }, { status: auth.error.status });
 
         const body = await request.json();
         const role = body?.role;
@@ -76,7 +60,7 @@ export async function POST(request) {
             department: role === AUTH_POLICY.roles.department ? department : null,
             forcePasswordReset,
             active: true,
-            createdBy: decoded.uid,
+            createdBy: auth.user.uid,
             createdAt: new Date().toISOString(),
             updatedAt: new Date().toISOString(),
         });
@@ -94,13 +78,11 @@ export async function POST(request) {
             return NextResponse.json({ message: "Email already exists" }, { status: 409 });
         }
 
-        // Return the actual error message to help debug configuration issues
-        const errorMessage = error instanceof Error ? error.message : String(error);
         const errorCode = error?.code || "server-error";
+        console.error("Admin user creation failed.", errorCode);
 
         return NextResponse.json({ 
             message: "Failed to create user", 
-            error: errorMessage,
             code: errorCode
         }, { status: 500 });
     }
