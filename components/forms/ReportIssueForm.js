@@ -81,8 +81,6 @@ export function ReportIssueForm() {
             formData.append("room", room)
             formData.append("anonymous", anonymous ? "true" : "false")
             formData.append("taggedAuthority", taggedAuthority)
-            formData.append("userId", currentUser?.uid || "unknown")
-            formData.append("userEmail", currentUser?.email || "unknown")
 
             for (const file of files) {
                 formData.append("file", file)

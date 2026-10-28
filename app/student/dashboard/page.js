@@ -19,7 +19,7 @@ import {
 } from "lucide-react"
 
 export default function StudentDashboard() {
-    const { currentUser, userData, isGuest } = useAuth()
+    const { currentUser, userData } = useAuth()
     const { complaints, loading } = useComplaints()
 
     // Filter complaints reported by this user

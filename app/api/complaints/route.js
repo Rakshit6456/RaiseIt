@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import cloudinary from "@/lib/cloudinary";
 import { FieldValue } from "firebase-admin/firestore";
+import { AUTH_POLICY } from "@/lib/auth-policy";
+import { AuthError, requireUser } from "@/lib/server-auth";
 
 // Simple native profanity filter
 const PROFANITY_WORDS = ["fuck", "shit", "bitch", "asshole", "cunt", "dick", "pussy", "bastard", "slut", "whore", "fag", "nigger", "nigga"];
@@ -84,6 +86,11 @@ async function callGroq(prompt, mimeType, base64Data) {
 
 export async function POST(request) {
   try {
+    // Identity comes from the verified session, never from the form body.
+    const caller = await requireUser(request, { roles: [AUTH_POLICY.roles.student] });
+    const userId = caller.uid;
+    const userEmail = caller.email || caller.profile.email || "unknown";
+
     const formData = await request.formData();
 
     const title = formData.get("title") || "";
@@ -94,8 +101,6 @@ export async function POST(request) {
     const room = formData.get("room") || "";
     const anonymousRaw = formData.get("anonymous") || "false";
     const taggedAuthority = formData.get("taggedAuthority") || "";
-    const userId = formData.get("userId") || "unknown";
-    const userEmail = formData.get("userEmail") || "unknown";
 
     // Validate required fields
     if (!title || !description || !category) {
@@ -119,7 +124,7 @@ export async function POST(request) {
     }
 
     // --- Daily Submission Limit (5 complaints/day/user) ---
-    if (userId && userId !== "unknown") {
+    {
       const submissionsSnap = await adminDb
         .collection("complaintSubmissions")
         .where("userId", "==", userId)
@@ -280,12 +285,10 @@ export async function POST(request) {
         });
       }
 
-      if (userId && userId !== "unknown") {
-        await adminDb.collection("complaintSubmissions").add({
-          userId,
-          createdAt: new Date().toISOString(),
-        });
-      }
+      await adminDb.collection("complaintSubmissions").add({
+        userId,
+        createdAt: new Date().toISOString(),
+      });
     } catch (firestoreError) {
       console.error("Firestore save error:", firestoreError);
       return NextResponse.json(
@@ -296,6 +299,9 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, merged: Boolean(matchedComplaintId), message: responseMessage });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, message: error.message }, { status: error.status });
+    }
     console.error("/api/complaints error:", error);
     return NextResponse.json(
       { success: false, message: `Server error: ${error.message || "Unknown error"}` },

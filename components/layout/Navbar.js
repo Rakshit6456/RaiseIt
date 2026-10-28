@@ -12,15 +12,8 @@ export function Navbar({ onMenuClick }) {
     const [isOpen, setIsOpen] = useState(false)
     const dropdownRef = useRef(null)
     
-    const isFakeGuest = !currentUser || currentUser.isGuest
-    const name = isFakeGuest ? "Guest User" : (userData?.name || currentUser?.displayName || currentUser?.email?.split("@")[0] || "User")
-    
-    let role = "student"
-    if (isFakeGuest) {
-        role = "guest"
-    } else if (userData?.role) {
-        role = userData.role
-    }
+    const name = userData?.name || currentUser?.displayName || currentUser?.email?.split("@")[0] || "User"
+    const role = userData?.role || "student"
 
     const displayRole = role.charAt(0).toUpperCase() + role.slice(1)
 
