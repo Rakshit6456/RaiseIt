@@ -8,22 +8,20 @@ RaiseIt is a campus complaint management platform built for IILM University. Stu
 - [Tech Stack](#%EF%B8%8F-tech-stack)
 - [Getting Started](#-getting-started)
 - [Environment Variables](#-environment-variables)
-- [Demo Credentials](#-demo-credentials)
 - [Project Structure](#-project-structure)
 
 ## ✨ Features
 
 - **3-Role Access Control**: dedicated dashboards and portals for Students, Departments, and Admins.
-- **Secure Authentication**: institution-only (`@iilm.edu`) sign-in via Firebase Authentication, with admin-controlled account provisioning.
+- **Secure Authentication**: institution-only (`@iilm.edu`) sign-in via Firebase Authentication. There is no self-registration and no demo login: admins create every account, users must set their own password on first login, and sessions are verified on the server (httpOnly cookie, route guards, role claims).
 - **AI Image Verification**: every uploaded photo is checked by Groq vision AI to confirm it actually depicts the reported issue before the complaint is accepted.
 - **Duplicate Detection & Severity Escalation**: similar reports from the same category/building are automatically merged into one complaint instead of creating clutter, escalating its severity (Low → Medium → High → Critical) with each new match.
 - **Fair-Use Daily Limit**: each student can submit up to 5 complaints per day to keep the queue meaningful.
 - **Community Forum**: students browse, upvote, and comment on reported issues; hot/new/top sorting and category/authority filters.
-- **Tag-the-Authority Routing**: reporters can tag the responsible department directly on submission.
+- **Tag-the-Authority Routing**: reporters can tag the responsible department directly on submission. Department accounts are locked to the single department an admin assigns.
 - **Real-time Tracking & Dashboards**: live status updates (Pending → In Progress → Resolved) and visual analytics via Recharts.
 - **Cloudinary Image Uploads**: complaint photos are hosted on Cloudinary.
 - **Feedback System**: closes the loop with user feedback once a complaint is resolved.
-- **Demo Credentials**: one-click, pre-seeded Student/Department/Admin accounts for instant preview from the login page.
 
 ## 🛠️ Tech Stack
 
@@ -95,109 +93,49 @@ GROQ_API_KEY=your_groq_api_key
 
 ```
 
-## 🔐 Permanent Firebase Authentication Setup (IILM)
+## 🔐 Authentication & Account Setup
 
-Follow these steps to enforce institution-only authentication and admin-controlled account creation.
+Sign-in is invite-only. Nobody can register themselves: the register page does not exist, and
+Firestore rules stop the browser from creating users or changing roles and departments.
 
-1. **Enable Firebase Email/Password Auth**
-    - Go to Firebase Console → Authentication → Sign-in method.
-    - Enable **Email/Password**.
+1. **Enable Firebase Email/Password auth** (Console → Authentication → Sign-in method).
+2. **Block client-side signups** (Console → Authentication → Settings → User actions → uncheck
+   *Enable create (sign-up)*, or enable *Disable user signup* on Identity Platform). Without this,
+   anyone with your public API key could create a Firebase account through the REST API.
+3. **Create the first admin** (admins cannot be created from the web app):
+   ```bash
+   ADMIN_PASSWORD='a-Strong-Passw0rd' npm run bootstrap:admin -- --email you@iilm.edu --name "Your Name"
+   ```
+4. **Create everyone else from the app**: sign in as admin → *Manage Accounts*. Pick *Student* or
+   *Department*, set a temporary password (use *Generate*), and share it privately. The user is
+   forced to choose their own password on first login. Department accounts are tied to the
+   department chosen here and cannot change it.
+5. **Bulk-create accounts (optional)**: copy `scripts/users.seed.example.json` to
+   `scripts/users.seed.json` (git-ignored), fill it in, then run `npm run seed:users`.
+6. **Publish the Firestore rules**: paste `firestore.rules` into Console → Firestore → Rules and
+   publish (or `firebase deploy --only firestore:rules`). Rules read the `role` claim that the
+   server sets on login, so run `npm run audit:users -- --sync-claims` once so existing accounts
+   have it before you publish.
 
-2. **Use IILM-only emails**
-    - This project enforces `@iilm.edu` in code for student/admin/department login and account provisioning (`lib/auth-policy.js`).
-    - Non-`@iilm.edu` emails are rejected.
+### Maintenance scripts
 
-3. **Disable public signup for production**
-    - Toggle `allowPublicSignup` in `lib/auth-policy.js`.
-    - Users can otherwise be created by an admin via the secure API or seed script.
+All scripts load `.env` and need `FIREBASE_SERVICE_ACCOUNT_KEY`.
 
-4. **Create first admin account (bootstrap)**
-    - In Firebase Console → Authentication → Users, create your first admin manually (must be `@iilm.edu`).
-    - In Firestore, create `users/{uid}` with:
-       - `role: "admin"`
-       - `name`, `email`, `active: true`
+| Command | What it does |
+|---|---|
+| `npm run bootstrap:admin -- --email … --name …` | Create or reset an admin (password via `ADMIN_PASSWORD`; `--temporary` forces a password change at first login). |
+| `npm run audit:users` | Read-only list of every account, role and anomaly. `-- --sync-claims` also writes missing role claims. |
+| `npm run disable:demo` | Dry run for the retired public demo accounts. `-- --apply` disables them; `-- --apply --delete` deletes them. |
+| `npm run seed:users` | Bulk-create student/department accounts from `scripts/users.seed.json`. |
 
-5. **Create accounts as admin (students/department/admin)**
-    - Use API endpoint `POST /api/admin/users` with admin Firebase ID token in `Authorization: Bearer <token>`.
-    - Payload example:
-    ```json
-    {
-       "name": "Rahul Sharma",
-       "email": "2023csb101@iilm.edu",
-       "password": "Student@123",
-       "role": "student",
-       "studentId": "2023CSB101",
-       "forcePasswordReset": true
-    }
-    ```
+### How a request is authorised
 
-6. **Pre-create accounts in bulk (recommended for launch)**
-    - Copy `scripts/users.seed.example.json` to `scripts/users.seed.json`, or point the script at any custom file.
-    - Add all student, department, and admin entries.
-    - Run:
-    ```bash
-    npm run seed:users
-    ```
-
-7. **Apply Firestore Security Rules (must-do)**
-    - Enforce role-based writes from client.
-    - Recommended baseline:
-    ```javascript
-    rules_version = '2';
-    service cloud.firestore {
-       match /databases/{database}/documents {
-          function isSignedIn() { return request.auth != null; }
-          function isAdmin() {
-             return isSignedIn() &&
-                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-          }
-          function isDepartment() {
-             return isSignedIn() &&
-                get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'department';
-          }
-
-          match /users/{userId} {
-             allow read: if isSignedIn() && request.auth.uid == userId || isAdmin();
-             allow create: if isAdmin();
-             allow update: if isAdmin() || request.auth.uid == userId;
-             allow delete: if isAdmin();
-          }
-
-          match /complaints/{complaintId} {
-             allow read: if isSignedIn();
-             allow create: if isSignedIn();
-             allow update: if isAdmin() || isDepartment();
-             allow delete: if isAdmin();
-          }
-
-          match /complaintSubmissions/{submissionId} {
-             allow read: if isAdmin();
-             allow create: if isSignedIn();
-          }
-       }
-    }
-    ```
-
-8. **Optional hardening**
-    - Turn off or remove the public register page in production.
-    - Force password reset on first login (using the `forcePasswordReset` flag in profile + UI flow).
-    - Add audit logs for admin account creation.
-
-## 🧪 Demo Credentials
-
-For quick previewing, `scripts/users.seed.example.json` (source of truth: `lib/demo-credentials.js`) defines one pre-seeded account per role. Seed them into Firebase with:
-
-```bash
-npm run seed:users:example
-```
-
-| Role | Email | Password |
-|---|---|---|
-| Student | `demo.student@iilm.edu` | `Student@123` |
-| Department (IT) | `demo.department@iilm.edu` | `Department@123` |
-| Admin | `demo.admin@iilm.edu` | `Admin@123` |
-
-These are also shown in a "Demo Credentials" box on the [login page](/auth/login) — click any row to autofill the sign-in form. Swap or remove them before pointing the app at a production Firebase project.
+- Login: the browser signs in with Firebase, then `POST /api/auth/session` verifies the token,
+  the profile (exists, active, valid role) and issues an httpOnly `__session` cookie.
+- `proxy.js` checks that cookie on every `/admin`, `/department`, `/student` and `/forum` page and
+  redirects by role. API routes re-verify with revocation checks (`lib/server-auth.js`).
+- Complaint creation (`/api/complaints`) takes the user's identity from the session, never the form.
+- Optional hardening: enable Firebase App Check, and add rate limiting in front of `/api/auth/session`.
 
 ## 📂 Project Structure
 
@@ -208,19 +146,22 @@ RaiseIT/
 │   ├── department/            # Department dashboard, forum, issues, profile
 │   ├── student/               # Student dashboard, report, track, forum
 │   ├── forum/[id]/            # Public complaint thread view
-│   ├── auth/                  # Login, department-login, register
+│   ├── auth/                  # Login, department-login, change-password
+│   ├── api/auth/              # Session cookie (login/logout) and password change
 │   ├── api/complaints/        # Complaint submission (AI check, dedupe, rate limit, upload)
 │   ├── api/admin/users/       # Admin-only account provisioning
 │   └── features/, page.js     # Marketing/features & landing pages
 ├── components/
 │   ├── dashboard/             # Stats, charts, recent activity/complaints
-│   ├── forms/                 # Login, register, report-issue, demo credentials
+│   ├── forms/                 # Login and report-issue forms
 │   ├── forum/                 # Forum thread card
 │   ├── layout/                # Shell, navbar, sidebar
 │   └── ui/                    # Radix-based primitives
 ├── context/                   # AuthContext, ComplaintContext (global state)
-├── lib/                       # firebase, firebase-admin, cloudinary, auth-policy, demo-credentials
-├── scripts/                   # seed-users.mjs + seed JSON payloads
+├── lib/                       # firebase, firebase-admin, cloudinary, auth-policy, server-auth, password-policy
+├── proxy.js                   # Server-side route guard (session cookie + role)
+├── firestore.rules            # Firestore security rules (publish in the console)
+├── scripts/                   # bootstrap-admin, audit-users, disable-demo-accounts, seed-users
 └── public/                    # Static assets
 ```
 

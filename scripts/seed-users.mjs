@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { initializeApp, cert, getApps } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { getFirestore } from "firebase-admin/firestore";
+import { validatePassword, claimsFromProfile } from "./_admin.mjs";
 
 const AUTH_POLICY = {
     allowedEmailDomain: "iilm.edu",
@@ -67,6 +68,9 @@ async function main() {
 
     for (const rawUser of users) {
         const role = rawUser?.role;
+        if (role === AUTH_POLICY.roles.admin) {
+            throw new Error("Admins are not created here. Use `npm run bootstrap:admin`.");
+        }
         if (!Object.values(AUTH_POLICY.roles).includes(role)) {
             throw new Error(`Invalid role for user: ${JSON.stringify(rawUser)}`);
         }
@@ -78,8 +82,9 @@ async function main() {
 
         const name = String(rawUser?.name || "").trim();
         const password = String(rawUser?.password || "").trim();
-        if (!name || password.length < 6) {
-            throw new Error(`Invalid name/password for ${email}`);
+        const passwordError = validatePassword(password);
+        if (!name || passwordError) {
+            throw new Error(`Invalid name/password for ${email}${passwordError ? `: ${passwordError}` : ""}`);
         }
 
         let uid;
@@ -99,31 +104,29 @@ async function main() {
             }
             const existing = await adminAuth.getUserByEmail(email);
             uid = existing.uid;
+            // Re-provisioning resets the password but never re-enables a disabled account.
             await adminAuth.updateUser(uid, {
                 password,
                 displayName: name,
-                disabled: false,
             });
             updated += 1;
         }
 
-        await adminAuth.setCustomUserClaims(uid, { role });
-
-        await adminDb.collection("users").doc(uid).set(
-            {
-                uid,
-                name,
-                email,
-                role,
-                studentId: role === AUTH_POLICY.roles.student ? String(rawUser.studentId || "").trim() : null,
-                department: role === AUTH_POLICY.roles.department ? String(rawUser.department || "").trim() : null,
-                forcePasswordReset: rawUser.forcePasswordReset !== false,
-                active: true,
-                updatedAt: new Date().toISOString(),
-                seededByScript: true,
-            },
-            { merge: true }
-        );
+        const profile = {
+            uid,
+            name,
+            email,
+            role,
+            studentId: role === AUTH_POLICY.roles.student ? String(rawUser.studentId || "").trim() : null,
+            department: role === AUTH_POLICY.roles.department ? String(rawUser.department || "").trim() : null,
+            // Seeded accounts always make the user choose their own password first.
+            forcePasswordReset: true,
+            active: true,
+            updatedAt: new Date().toISOString(),
+            seededByScript: true,
+        };
+        await adminAuth.setCustomUserClaims(uid, claimsFromProfile(profile));
+        await adminDb.collection("users").doc(uid).set(profile, { merge: true });
     }
 
     console.log(`Seed complete. Created: ${created}, Updated: ${updated}`);

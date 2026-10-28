@@ -39,3 +39,6 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# real account lists (contain temporary passwords)
+/scripts/users.seed.json
