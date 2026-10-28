@@ -2,10 +2,11 @@ import { NextResponse } from "next/server";
 import { adminDb } from "@/lib/firebase-admin";
 import cloudinary from "@/lib/cloudinary";
 import { FieldValue } from "firebase-admin/firestore";
-import { authenticateApiRequest } from "@/lib/api-auth";
 import { MAX_COMPLAINT_IMAGES, MAX_IMAGE_SIZE_BYTES, readValidatedImage } from "@/lib/image-validation";
 import { parseFormDataLimited, RequestBodyError } from "@/lib/request-body";
 import { COMPLAINT_CATEGORIES, isComplaintAuthority } from "@/lib/complaint-options";
+import { AUTH_POLICY } from "@/lib/auth-policy";
+import { AuthError, requireUser } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 
@@ -100,10 +101,8 @@ async function callGroq(prompt, mimeType, base64Data) {
 
 export async function POST(request) {
   try {
-    const auth = await authenticateApiRequest(request, ["student", "department"]);
-    if (auth.error) {
-      return NextResponse.json({ success: false, message: auth.error.message }, { status: auth.error.status });
-    }
+    // Identity and role come from the verified server session, never the form.
+    const caller = await requireUser(request, { roles: [AUTH_POLICY.roles.student] });
 
     const formData = await parseFormDataLimited(request, 12 * 1024 * 1024 + 128 * 1024);
 
@@ -115,8 +114,8 @@ export async function POST(request) {
     const room = String(formData.get("room") || "").trim();
     const anonymousRaw = String(formData.get("anonymous") || "false");
     const taggedAuthority = String(formData.get("taggedAuthority") || "");
-    const userId = auth.user.uid;
-    const userEmail = auth.user.email;
+    const userId = caller.uid;
+    const userEmail = caller.email || caller.profile.email || "unknown";
     const asset = String(formData.get("asset") || "").trim().slice(0, 100);
     const severityScoreRaw = Number(formData.get("severityScore") || 3);
     const severityScore = Number.isInteger(severityScoreRaw) && severityScoreRaw >= 1 && severityScoreRaw <= 5 ? severityScoreRaw : 3;
@@ -124,7 +123,6 @@ export async function POST(request) {
     const priority = PRIORITIES.has(priorityRaw) ? priorityRaw : "Medium";
     const safetyConcern = formData.get("safetyConcern") === "true";
     const analysisReasoning = String(formData.get("analysisReasoning") || "").trim().slice(0, 280);
-
     // Validate required fields
     if (!title || !description || !category) {
       return NextResponse.json(
@@ -350,6 +348,9 @@ export async function POST(request) {
 
     return NextResponse.json({ success: true, merged: Boolean(matchedComplaintId), message: responseMessage });
   } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ success: false, message: error.message }, { status: error.status });
+    }
     if (error instanceof RequestBodyError) {
       return NextResponse.json({ success: false, message: error.message }, { status: error.status });
     }

@@ -60,9 +60,7 @@ export function WorkOrderPanel({ complaint }) {
                 return
             }
             try {
-                const token = await currentUser.getIdToken()
                 const response = await fetch(`/api/admin/complaints/${encodeURIComponent(complaint.id)}/work-order`, {
-                    headers: { Authorization: `Bearer ${token}` },
                     cache: "no-store",
                 })
                 const result = await response.json()
@@ -83,10 +81,7 @@ export function WorkOrderPanel({ complaint }) {
 
     if (userData?.role !== "admin") return null
 
-    const requestHeaders = async () => ({
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${await currentUser.getIdToken()}`,
-    })
+    const requestHeaders = () => ({ "Content-Type": "application/json" })
 
     const updateDraft = (key, value) => setDraft(current => ({ ...current, [key]: value }))
 

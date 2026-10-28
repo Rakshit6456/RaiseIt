@@ -1,26 +1,25 @@
-import { auth } from "@/lib/firebase";
-
 export async function createUserByAdmin(payload) {
-    if (!auth?.currentUser) {
-        throw new Error("You must be logged in as admin.");
-    }
-
-    const token = await auth.currentUser.getIdToken();
+    // Same-origin request: the browser sends the httpOnly session cookie, which
+    // the server accepts only for admins who have entered their security code.
     const response = await fetch("/api/admin/users", {
         method: "POST",
-        headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${token}`,
-        },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
     });
 
-    const data = await response.json();
+    const data = await response.json().catch(() => ({}));
     if (!response.ok) {
-        // If the server provided a specific error reason, include it in the thrown error
-        const detail = data?.error ? `: ${data.error}` : "";
-        throw new Error((data?.message || "Failed to create user") + detail);
+        throw new Error(data?.message || "Failed to create user");
     }
 
     return data;
+}
+
+export async function listUsersByAdmin() {
+    const response = await fetch("/api/admin/users", { cache: "no-store" });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) {
+        throw new Error(data?.message || "Failed to load accounts");
+    }
+    return data.users;
 }

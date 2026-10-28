@@ -96,12 +96,10 @@ export function ReportIssueForm() {
 
         setAnalysisLoading(true)
         try {
-            const token = await currentUser.getIdToken()
             const formData = new FormData()
             formData.append("file", files[0])
             const response = await fetch("/api/complaints/analyze", {
                 method: "POST",
-                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             })
             const result = await response.json()
@@ -179,7 +177,6 @@ export function ReportIssueForm() {
 
         setLoading(true)
         try {
-            const token = await currentUser.getIdToken()
             const formData = new FormData()
             formData.append("title", title)
             formData.append("description", description)
@@ -203,7 +200,6 @@ export function ReportIssueForm() {
 
             const res = await fetch("/api/complaints", {
                 method: "POST",
-                headers: { Authorization: `Bearer ${token}` },
                 body: formData,
             })
 

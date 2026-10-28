@@ -51,35 +51,19 @@ export default function DepartmentLoginPage() {
                 return
             }
 
-            const result = await login(normalizedEmail, password)
-            const user = result.user
-
-            // Check Firestore for role
-            const { doc, getDoc } = await import("firebase/firestore")
-            const { db } = await import("@/lib/firebase")
-            const userDoc = await getDoc(doc(db, "users", user.uid))
-
-            if (!userDoc.exists()) {
-                setError("Account not found in the system. Contact admin.")
-                setLoading(false)
-                return
-            }
-
-            const userData = userDoc.data()
-
-            if (userData.role !== "department") {
-                setError("This portal is for department accounts only. Use the correct login.")
-                setLoading(false)
-                return
-            }
-
-            router.push("/department/dashboard")
+            // The server checks the account is active and returns where to go;
+            // expectedRole rejects (and signs out) non-department accounts.
+            const { redirectTo } = await login(normalizedEmail, password, { expectedRole: "department" })
+            router.push(redirectTo)
         } catch (err) {
             console.error("Department login error:", err)
             if (err.code === "auth/invalid-credential" || err.code === "auth/user-not-found" || err.code === "auth/wrong-password") {
                 setError("Invalid email or password. Please try again.")
             } else if (err.code === "auth/too-many-requests") {
                 setError("Too many failed attempts. Please try again later.")
+            } else if (!err.code && err.message) {
+                // Messages thrown by our own login flow are already user-safe.
+                setError(err.message)
             } else {
                 setError("Login failed. Please try again.")
             }
@@ -219,14 +203,14 @@ export default function DepartmentLoginPage() {
                     <div className="border border-dashed rounded-xl p-4 bg-muted/20 space-y-2">
                         <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">ℹ️ For Admins</p>
                         <p className="text-xs text-muted-foreground leading-relaxed">
-                            Department accounts must be created by an administrator in Firebase with <code className="bg-muted px-1 py-0.5 rounded text-xs">role: &quot;department&quot;</code> and a <code className="bg-muted px-1 py-0.5 rounded text-xs">department</code> field set to the tagged authority name (e.g., <code className="bg-muted px-1 py-0.5 rounded text-xs">&quot;Electrical Department&quot;</code>).
+                            Department accounts are created by an administrator and are tied to one department. Contact your administrator if you need access.
                         </p>
                     </div>
 
                     <div className="flex items-center justify-center gap-4 text-sm text-muted-foreground">
                         <Link href="/auth/login" className="hover:text-primary transition-colors">Student Login</Link>
                         <span>·</span>
-                        <Link href="/admin/dashboard" className="hover:text-primary transition-colors">Admin Portal</Link>
+                        <Link href="/auth/login" className="hover:text-primary transition-colors">Admin Portal</Link>
                     </div>
                 </div>
             </div>

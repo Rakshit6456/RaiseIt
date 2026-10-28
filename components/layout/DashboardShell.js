@@ -1,14 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { Sidebar } from "./Sidebar"
 import { Navbar } from "./Navbar"
 import { useAuth } from "@/context/AuthContext"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 
 export function DashboardShell({ children, role: roleProp = "student" }) {
-    const { userData, loading } = useAuth()
+    const { currentUser, userData, loading, logout } = useAuth()
+    const router = useRouter()
     const pathname = usePathname()
     const [mobileNavOpen, setMobileNavOpen] = useState(false)
 
@@ -19,30 +20,18 @@ export function DashboardShell({ children, role: roleProp = "student" }) {
         setMobileNavOpen(false)
     }
 
-    // Role Detection Logic:
-    // 1. Detect based on pathname (most reliable for layout).
-    // 2. Persist role in sessionStorage so shared pages keep correct sidebar.
-    // 3. Firebase userData.role always wins at the end.
-    let role = roleProp
-    if (pathname?.startsWith("/admin")) {
-        role = "admin"
-        if (typeof window !== "undefined") sessionStorage.setItem("raiseit_role", "admin")
-    } else if (pathname?.startsWith("/department")) {
-        role = "department"
-        if (typeof window !== "undefined") sessionStorage.setItem("raiseit_role", "department")
-    } else if (pathname?.startsWith("/student")) {
-        role = "student"
-        if (typeof window !== "undefined") sessionStorage.setItem("raiseit_role", "student")
-    } else if (typeof window !== "undefined") {
-        // Shared page (e.g. /forum/[id]) — use stored role
-        const stored = sessionStorage.getItem("raiseit_role")
-        if (stored) role = stored
-    }
-    // Firebase user role always wins
-    if (userData?.role === "admin") role = "admin"
-    if (userData?.role === "department" && !pathname?.startsWith("/admin")) role = "department"
+    // The role comes from the server-managed profile. (The proxy already stops
+    // other roles reaching these routes; this is only for picking the sidebar.)
+    const role = userData?.role || roleProp
 
-    if (loading) {
+    // No Firebase session (or no profile): clear the server cookie and go to login.
+    const signedOut = !loading && (!currentUser || !userData)
+    useEffect(() => {
+        if (!signedOut) return
+        logout().finally(() => router.replace("/auth/login"))
+    }, [signedOut, logout, router])
+
+    if (loading || signedOut) {
         return (
             <div className="flex h-screen items-center justify-center">
                 <div className="flex flex-col items-center gap-3">

@@ -7,8 +7,9 @@ import { pathToFileURL, fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const mockState = {
+  sessionCookie: "mock-session",
   tokenError: null,
-  decoded: { uid: "student-1", email: "student@example.edu", role: "student" },
+  decoded: { uid: "student-1", email: "student@example.edu", role: "student", mustChangePassword: false, auth_time: Math.floor(Date.now() / 1000) },
   profile: { role: "student", active: true, email: "student@example.edu" },
   groqResult: {
     primaryFault: "Leaking tap", visibleEvidence: "Water is visible below the tap.", isUncertain: false,
@@ -32,7 +33,13 @@ class MockGroqRequestError extends Error {
 }
 
 const mocks = {
-  "next/server": { NextResponse: { json: (body, options = {}) => Response.json(body, options) } },
+  "next/server": { NextResponse: { json: (body, options = {}) => {
+    const response = Response.json(body, options);
+    response.cookies = { set: (...args) => { mockState.cookieSet = args; } };
+    return response;
+  } } },
+  "next/headers": { cookies: async () => ({ get: name => name === "__session" && mockState.sessionCookie ? { value: mockState.sessionCookie } : undefined }) },
+  "server-only": {},
   "@/lib/firebase-admin": {
     adminAuth: {
       verifyIdToken: async () => {
@@ -40,6 +47,13 @@ const mocks = {
         if (mockState.tokenError) throw mockState.tokenError;
         return mockState.decoded;
       },
+      verifySessionCookie: async () => {
+        mockState.firebaseCalls++;
+        if (mockState.tokenError) throw mockState.tokenError;
+        return mockState.decoded;
+      },
+      setCustomUserClaims: async () => { mockState.claimsUpdated = true; },
+      createSessionCookie: async () => "mock-session-cookie",
     },
     adminDb: {
       collection: name => {
@@ -106,8 +120,9 @@ async function loadModule(relativePath, context = createContext(), cache = new M
 }
 
 function resetMocks() {
+  mockState.sessionCookie = "mock-session";
   mockState.tokenError = null;
-  mockState.decoded = { uid: "student-1", email: "student@example.edu", role: "student" };
+  mockState.decoded = { uid: "student-1", email: "student@example.edu", role: "student", mustChangePassword: false, auth_time: Math.floor(Date.now() / 1000) };
   mockState.profile = { role: "student", active: true, email: "student@example.edu" };
   mockState.groqError = null;
   mockState.groqCalls = 0;
@@ -115,6 +130,8 @@ function resetMocks() {
   mockState.firebaseCalls = 0;
   mockState.writes = 0;
   mockState.collections = [];
+  mockState.claimsUpdated = false;
+  mockState.cookieSet = null;
   mockState.groqResult = {
     primaryFault: "Leaking tap", visibleEvidence: "Water is visible below the tap.", isUncertain: false,
     title: "Leaking tap", description: "Water is visible below the tap.", category: "plumbing",
@@ -159,52 +176,53 @@ test("bounded body parsers reject malformed, declared-oversized, and streamed-ov
   await assert.rejects(namespace.parseJsonLimited(request, 4), error => error.status === 413);
 });
 
-test("authentication rejects missing and invalid/expired bearer tokens", async () => {
-  const { namespace } = await loadModule("lib/api-auth.js");
-  const missing = await namespace.authenticateApiRequest(new Request("http://local"), ["student"]);
-  assert.equal(missing.error.status, 401);
+test("server authentication rejects missing and invalid/expired session cookies", async () => {
+  const { namespace } = await loadModule("lib/server-auth.js");
+  mockState.sessionCookie = null;
+  await assert.rejects(namespace.requireUser(new Request("http://local"), { roles: ["student"] }), error => error.status === 401);
   assert.equal(mockState.firebaseCalls, 0);
 
   mockState.tokenError = new Error("invalid or expired token");
-  const invalid = await namespace.authenticateApiRequest(new Request("http://local", { headers: { authorization: "Bearer bad" } }), ["student"]);
-  assert.equal(invalid.error.status, 401);
-  assert.match(invalid.error.message, /invalid or has expired/);
+  await assert.rejects(namespace.requireUser(new Request("http://local"), { roles: ["student"] }), error => error.status === 401);
 });
 
 test("student is authenticated but rejected from admin authorization", async () => {
-  const { namespace } = await loadModule("lib/api-auth.js");
-  const result = await namespace.authenticateApiRequest(new Request("http://local", { headers: { authorization: "Bearer test-token" } }), ["admin"]);
-  assert.equal(result.error.status, 403);
-  assert.equal(result.error.message, "You are not authorized to perform this action.");
+  const { namespace } = await loadModule("lib/server-auth.js");
+  await assert.rejects(namespace.requireUser(new Request("http://local"), { roles: ["admin"] }), error => error.status === 403);
 });
 
-test("forged admin profile without admin claim and claim/profile mismatches are rejected", async () => {
-  const { namespace } = await loadModule("lib/api-auth.js");
+test("session creation refuses a forged profile role or stale role claim", async () => {
+  const { namespace } = await loadModule("app/api/auth/session/route.js");
   mockState.profile = { role: "admin", active: true };
-  let result = await namespace.authenticateApiRequest(new Request("http://local", { headers: { authorization: "Bearer test-token" } }), ["admin"]);
-  assert.equal(result.error.status, 403);
+  let response = await namespace.POST(new Request("http://local", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idToken: "mock-id-token" }) }));
+  assert.equal(response.status, 409);
+  assert.equal((await response.json()).needsRefresh, true);
+  assert.equal(mockState.cookieSet, null);
+  assert.equal(mockState.claimsUpdated, true);
 
-  mockState.decoded = { uid: "student-1", role: "admin" };
+  mockState.claimsUpdated = false;
+  mockState.decoded = { uid: "student-1", email: "student@example.edu", role: "admin", mustChangePassword: false, auth_time: Math.floor(Date.now() / 1000) };
   mockState.profile = { role: "student", active: true };
-  result = await namespace.authenticateApiRequest(new Request("http://local", { headers: { authorization: "Bearer test-token" } }), ["admin"]);
-  assert.equal(result.error.status, 403);
+  response = await namespace.POST(new Request("http://local", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ idToken: "mock-id-token" }) }));
+  assert.equal(response.status, 409);
+  assert.equal(mockState.cookieSet, null);
 });
 
-test("admin with matching server claim and profile passes admin authorization", async () => {
-  const { namespace } = await loadModule("lib/api-auth.js");
-  mockState.decoded = { uid: "admin-1", email: "admin@example.edu", role: "admin" };
+test("admin with active server session profile passes admin authorization", async () => {
+  const { namespace } = await loadModule("lib/server-auth.js");
+  mockState.decoded = { uid: "admin-1", email: "admin@example.edu", role: "admin", mustChangePassword: false };
   mockState.profile = { role: "admin", active: true };
-  const result = await namespace.authenticateApiRequest(new Request("http://local", { headers: { authorization: "Bearer test-token" } }), ["admin"]);
-  assert.equal(result.user.role, "admin");
-  assert.equal(result.user.uid, "admin-1");
+  const result = await namespace.requireUser(new Request("http://local"), { roles: ["admin"] });
+  assert.equal(result.role, "admin");
+  assert.equal(result.uid, "admin-1");
 });
 
 function imageRequest({ auth = true, bytes = [137, 80, 78, 71, 13, 10, 26, 10] } = {}) {
+  mockState.sessionCookie = auth ? "mock-session" : null;
   const form = new FormData();
   form.append("file", new File([Buffer.from(bytes)], "issue.png", { type: "image/png" }));
   return new Request("http://local/api/complaints/analyze", {
     method: "POST",
-    headers: auth ? { authorization: "Bearer test-token" } : {},
     body: form,
   });
 }
@@ -296,7 +314,8 @@ test("form allows manual department edits and no longer renders the safety check
     assert.ok(source.includes(`value="${authority}"`), `expected the existing dropdown to include ${authority}`);
   }
   assert.match(source, /fetch\("\/api\/complaints"/);
-  assert.match(source, /Authorization: `Bearer \$\{token\}`/);
+  assert.match(source, /fetch\("\/api\/complaints\/analyze"/);
+  assert.doesNotMatch(source, /getIdToken|Authorization: `Bearer/);
   assert.doesNotMatch(source, /Possible safety concern based on the photo/);
 });
 

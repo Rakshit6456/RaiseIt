@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,16 +13,31 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card"
-import { User, Shield, Building2 } from "lucide-react"
 import { useAuth } from "@/context/AuthContext"
-import { doc, getDoc } from "firebase/firestore"
-import { db, auth } from "@/lib/firebase" // Ensure you have auth exported from lib/firebase if not present, checking imports
-import { signOut } from "firebase/auth"
 import {
     AUTH_POLICY,
     ensureInstitutionEmail,
     isAllowedInstitutionEmail,
 } from "@/lib/auth-policy"
+
+function loginErrorMessage(err) {
+    switch (err?.code) {
+        case "auth/invalid-credential":
+        case "auth/invalid-email":
+        case "auth/user-not-found":
+        case "auth/wrong-password":
+            return "Invalid email or password."
+        case "auth/user-disabled":
+            return "This account has been disabled. Contact your administrator."
+        case "auth/too-many-requests":
+            return "Too many failed attempts. Please try again later."
+        case "auth/network-request-failed":
+            return "Network error. Check your connection and try again."
+        default:
+            // Messages thrown by our own login flow are already user-safe.
+            return err?.message && !err.code ? err.message : "Failed to sign in. Please try again."
+    }
+}
 
 export function LoginForm({ username, password, onUsernameChange, onPasswordChange }) {
     const router = useRouter()
@@ -38,7 +52,7 @@ export function LoginForm({ username, password, onUsernameChange, onPasswordChan
         const trimmedUsername = username.trim()
         if (!trimmedUsername) return
 
-        let email = ensureInstitutionEmail(trimmedUsername)
+        const email = ensureInstitutionEmail(trimmedUsername)
         if (!isAllowedInstitutionEmail(email)) {
             setError("Only @iilm.edu email accounts can login.")
             return
@@ -46,36 +60,14 @@ export function LoginForm({ username, password, onUsernameChange, onPasswordChan
 
         setLoading(true)
         try {
-            const userCredential = await login(email, password)
-            const uid = userCredential.user.uid
-
-            // Fetch User Role from Firestore
-            const userDoc = await getDoc(doc(db, "users", uid))
-
-            if (userDoc.exists()) {
-                const userData = userDoc.data()
-                const userRole = userData.role
-
-                // Dynamic Redirection based on Role
-                if (userRole === AUTH_POLICY.roles.student) {
-                    router.push("/student/dashboard")
-                } else if (userRole === AUTH_POLICY.roles.department) {
-                    router.push("/department/dashboard")
-                } else if (userRole === AUTH_POLICY.roles.admin) {
-                    router.push("/admin/dashboard")
-                } else {
-                    setError("Unauthorized: Unrecognized role.")
-                    await signOut(auth)
-                }
-            } else {
-                setError("User profile not found. Please contact administrator.")
-                await signOut(auth)
-            }
+            // The server validates the account and tells us where to go.
+            const { redirectTo } = await login(email, password)
+            router.push(redirectTo)
         } catch (err) {
-            console.error("Login failed", err)
-            setError("Failed to sign in. Please check your credentials.")
+            console.error("Login failed", err?.code || err?.message)
+            setError(loginErrorMessage(err))
+            setLoading(false)
         }
-        setLoading(false)
     }
 
     return (
@@ -121,12 +113,9 @@ export function LoginForm({ username, password, onUsernameChange, onPasswordChan
                     <div className="space-y-2">
                         <div className="flex items-center justify-between">
                             <Label htmlFor="password">Password</Label>
-                            <Link
-                                href="/auth/forgot-password"
-                                className="text-sm text-primary hover:underline"
-                            >
-                                Forgot password?
-                            </Link>
+                            <span className="text-xs text-muted-foreground">
+                                Forgot it? Ask your administrator.
+                            </span>
                         </div>
                         <Input
                             id="password"

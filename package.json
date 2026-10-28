@@ -7,8 +7,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "seed:users": "node scripts/seed-users.mjs",
-    "seed:users:example": "node scripts/seed-users.mjs scripts/users.seed.example.json"
+    "seed:users": "node --env-file=.env scripts/seed-users.mjs",
+    "bootstrap:admin": "node --env-file=.env scripts/bootstrap-admin.mjs",
+    "disable:demo": "node --env-file=.env scripts/disable-demo-accounts.mjs",
+    "audit:users": "node --env-file=.env scripts/audit-users.mjs"
   },
   "dependencies": {
     "@radix-ui/react-checkbox": "^1.3.3",

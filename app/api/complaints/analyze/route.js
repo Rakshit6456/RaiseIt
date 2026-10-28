@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { authenticateApiRequest } from "@/lib/api-auth";
 import { GroqRequestError, requestGroqJson } from "@/lib/groq";
 import { readValidatedImage } from "@/lib/image-validation";
 import { parseFormDataLimited, RequestBodyError } from "@/lib/request-body";
 import { COMPLAINT_CATEGORIES, getAuthorityForCategory } from "@/lib/complaint-options";
+import { AUTH_POLICY } from "@/lib/auth-policy";
+import { AuthError, requireUser } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 
@@ -83,10 +84,8 @@ function normalizeAnalysis(value) {
 }
 
 export async function POST(request) {
-  const auth = await authenticateApiRequest(request, ["student", "department"]);
-  if (auth.error) return NextResponse.json({ message: auth.error.message }, { status: auth.error.status });
-
   try {
+    await requireUser(request, { roles: [AUTH_POLICY.roles.student] });
     const formData = await parseFormDataLimited(request, 5 * 1024 * 1024 + 64 * 1024);
     const image = formData.get("file");
     const validated = await readValidatedImage(image);
@@ -118,6 +117,7 @@ export async function POST(request) {
 
     return NextResponse.json({ analysis });
   } catch (error) {
+    if (error instanceof AuthError) return NextResponse.json({ message: error.message }, { status: error.status });
     if (error instanceof RequestBodyError) return NextResponse.json({ message: error.message }, { status: error.status });
     if (error instanceof GroqRequestError) {
       return NextResponse.json({ message: error.message }, { status: error.status });

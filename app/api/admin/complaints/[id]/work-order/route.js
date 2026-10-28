@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { authenticateApiRequest } from "@/lib/api-auth";
 import { GroqRequestError, requestGroqJson } from "@/lib/groq";
 import { adminDb } from "@/lib/firebase-admin";
 import { saveApprovedWorkOrder } from "@/lib/work-orders";
 import { parseJsonLimited, RequestBodyError } from "@/lib/request-body";
+import { AUTH_POLICY } from "@/lib/auth-policy";
+import { AuthError, requireUser } from "@/lib/server-auth";
 
 export const runtime = "nodejs";
 
@@ -73,11 +74,14 @@ function responseError(error) {
 }
 
 async function adminAuth(request) {
-  const result = await authenticateApiRequest(request, ["admin"]);
-  if (result.error) {
-    return { response: NextResponse.json({ message: result.error.message }, { status: result.error.status }) };
+  try {
+    return { user: await requireUser(request, { roles: [AUTH_POLICY.roles.admin] }) };
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return { response: NextResponse.json({ message: error.message }, { status: error.status }) };
+    }
+    return { response: responseError(error) };
   }
-  return { user: result.user };
 }
 
 async function getComplaint(id) {
