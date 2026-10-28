@@ -6,12 +6,11 @@ import { AdminDashboardStats } from "@/components/dashboard/AdminDashboardStats"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { useComplaints } from "@/context/ComplaintContext"
-import { resolveComplaint } from "@/actions/complaints"
 import { Badge } from "@/components/ui/badge"
 import { CheckCircle, Clock, AlertTriangle, Search } from "lucide-react"
 
 export default function AdminDashboard() {
-    const { complaints, loading, refreshComplaints } = useComplaints()
+    const { complaints, loading, updateStatus } = useComplaints()
     const [actionLoading, setActionLoading] = useState(null)
 
     if (loading) {
@@ -25,13 +24,8 @@ export default function AdminDashboard() {
     const handleResolve = async (id) => {
         setActionLoading(id)
         try {
-            const result = await resolveComplaint(id)
-            if (result.success) {
-                // Success UI will update through refreshed data
-                if (refreshComplaints) refreshComplaints()
-            } else {
-                console.error(result.message)
-            }
+            // Runs as the signed-in admin; the live Firestore listener refreshes the list.
+            await updateStatus(id, "Resolved", "Resolved by admin")
         } catch (error) {
             console.error("An unexpected error occurred", error)
         } finally {

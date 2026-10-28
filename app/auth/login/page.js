@@ -2,19 +2,11 @@
 
 import { useState } from "react"
 import { LoginForm } from "@/components/forms/LoginForm"
-import { DemoCredentials } from "@/components/forms/DemoCredentials"
 import Image from "next/image"
 
 export default function LoginPage() {
     const [username, setUsername] = useState("")
     const [password, setPassword] = useState("")
-    const [selectedRole, setSelectedRole] = useState(null)
-
-    const handleSelectDemo = (user) => {
-        setUsername(user.username)
-        setPassword(user.password)
-        setSelectedRole(user.role)
-    }
 
     return (
         <div className="min-h-screen grid lg:grid-cols-2">
@@ -47,16 +39,9 @@ export default function LoginPage() {
                 <LoginForm
                     username={username}
                     password={password}
-                    onUsernameChange={(value) => {
-                        setUsername(value)
-                        setSelectedRole(null)
-                    }}
-                    onPasswordChange={(value) => {
-                        setPassword(value)
-                        setSelectedRole(null)
-                    }}
+                    onUsernameChange={setUsername}
+                    onPasswordChange={setPassword}
                 />
-                <DemoCredentials onSelect={handleSelectDemo} selectedRole={selectedRole} />
             </div>
         </div>
     )
