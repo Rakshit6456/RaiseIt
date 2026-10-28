@@ -1,21 +1,52 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { DashboardShell } from "@/components/layout/DashboardShell"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { UserPlus, ShieldPlus, Building2, UserCircle, Loader2, CheckCircle2, AlertCircle } from "lucide-react"
+import { UserPlus, ShieldPlus, Building2, UserCircle, Loader2, CheckCircle2, AlertCircle, Users, RefreshCw } from "lucide-react"
 import { AUTH_POLICY } from "@/lib/auth-policy"
-import { createUserByAdmin } from "@/actions/users"
+import { generatePassword } from "@/lib/password-policy"
+import { createUserByAdmin, listUsersByAdmin } from "@/actions/users"
+import { Badge } from "@/components/ui/badge"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 
 export default function AdminAccountsPage() {
     const [loading, setLoading] = useState(false)
     const [success, setSuccess] = useState(false)
     const [error, setLocalError] = useState("")
     const [lastCreated, setLastCreated] = useState(null)
+
+    const [accounts, setAccounts] = useState([])
+    const [accountsLoading, setAccountsLoading] = useState(true)
+    const [accountsError, setAccountsError] = useState("")
+    const [roleFilter, setRoleFilter] = useState("all")
+    const [search, setSearch] = useState("")
+
+    const loadAccounts = useCallback(async () => {
+        setAccountsLoading(true)
+        setAccountsError("")
+        try {
+            setAccounts(await listUsersByAdmin())
+        } catch (err) {
+            setAccountsError(err.message || "Could not load accounts.")
+        } finally {
+            setAccountsLoading(false)
+        }
+    }, [])
+
+    useEffect(() => {
+        loadAccounts()
+    }, [loadAccounts])
+
+    const visibleAccounts = accounts.filter(a =>
+        (roleFilter === "all" || a.role === roleFilter) &&
+        (!search.trim() || `${a.name} ${a.email} ${a.studentId || ""} ${a.department || ""}`.toLowerCase().includes(search.trim().toLowerCase()))
+    )
+    const formatDate = (value) => value ? new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) : "Never"
     
     const [formData, setFormData] = useState({
         name: "",
@@ -53,6 +84,7 @@ export default function AdminAccountsPage() {
                 password: formData.password,
                 role: result.role
             })
+            loadAccounts()
 
             // Reset part of form
             setFormData(prev => ({
@@ -175,16 +207,26 @@ export default function AdminAccountsPage() {
 
                                 <div className="space-y-2">
                                     <Label htmlFor="password">Initial Password</Label>
-                                    <Input
-                                        id="password"
-                                        name="password"
-                                        type="password"
-                                        placeholder="Min 6 characters"
-                                        value={formData.password}
-                                        onChange={handleChange}
-                                        required
-                                    />
-                                    <p className="text-[11px] text-muted-foreground">The user will use this password for their first login.</p>
+                                    <div className="flex gap-2">
+                                        <Input
+                                            id="password"
+                                            name="password"
+                                            type="text"
+                                            autoComplete="off"
+                                            placeholder="Min 10 chars, upper, lower, number"
+                                            value={formData.password}
+                                            onChange={handleChange}
+                                            required
+                                        />
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            onClick={() => setFormData(prev => ({ ...prev, password: generatePassword() }))}
+                                        >
+                                            Generate
+                                        </Button>
+                                    </div>
+                                    <p className="text-[11px] text-muted-foreground">Temporary password. The user must replace it with their own at first login.</p>
                                 </div>
 
                                 {formData.role === "student" && (
@@ -213,12 +255,9 @@ export default function AdminAccountsPage() {
                                                 <SelectValue placeholder="Select Department" />
                                             </SelectTrigger>
                                             <SelectContent>
-                                                <SelectItem value="Electrical Department">Electrical Department</SelectItem>
-                                                <SelectItem value="Plumbing Department">Plumbing Department</SelectItem>
-                                                <SelectItem value="IT Department">IT Department</SelectItem>
-                                                <SelectItem value="Infrastructure Team">Infrastructure Team</SelectItem>
-                                                <SelectItem value="Sanitation Team">Sanitation Team</SelectItem>
-                                                <SelectItem value="Security Office">Security Office</SelectItem>
+                                                {AUTH_POLICY.departments.map(name => (
+                                                    <SelectItem key={name} value={name}>{name}</SelectItem>
+                                                ))}
                                             </SelectContent>
                                         </Select>
                                     </div>
@@ -267,7 +306,7 @@ export default function AdminAccountsPage() {
                                             <span className="capitalize font-bold text-primary">{lastCreated.role}</span>
                                         </div>
                                     </div>
-                                    <p className="text-xs text-green-700 font-medium">Capture these credentials to share with the user.</p>
+                                    <p className="text-xs text-green-700 font-medium">Shown once. Copy it now and share it privately.</p>
                                 </CardContent>
                             </Card>
                         )}
@@ -282,20 +321,110 @@ export default function AdminAccountsPage() {
                             <CardContent className="space-y-4 text-sm text-muted-foreground leading-relaxed">
                                 <div className="flex gap-3">
                                     <div className="mt-1 flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px]">1</div>
-                                    <p>Accounts created here are immediately active and can be used to log in from the main portal.</p>
+                                    <p>Accounts created here are active immediately. Users cannot sign themselves up, and must set their own password on first login.</p>
                                 </div>
                                 <div className="flex gap-3">
                                     <div className="mt-1 flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px]">2</div>
-                                    <p>Ensure email addresses are correct as they serve as the unique identifier for the user.</p>
+                                    <p>A department account is locked to the department you choose here. It cannot be changed from the app.</p>
                                 </div>
                                 <div className="flex gap-3">
                                     <div className="mt-1 flex-shrink-0 w-5 h-5 rounded-full bg-primary/10 text-primary flex items-center justify-center font-bold text-[10px]">3</div>
-                                    <p>Passwords must be shared securely with the users after creation.</p>
+                                    <p>Share the temporary password privately. It is displayed below only until you leave this page.</p>
                                 </div>
                             </CardContent>
                         </Card>
                     </div>
                 </div>
+
+                {/* All accounts */}
+                <Card>
+                    <CardHeader>
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div>
+                                <CardTitle className="flex items-center gap-2">
+                                    <Users className="w-5 h-5 text-primary" />
+                                    All Accounts
+                                    {!accountsLoading && <span className="text-sm font-normal text-muted-foreground">({visibleAccounts.length} of {accounts.length})</span>}
+                                </CardTitle>
+                                <CardDescription>Every account that exists, including ones created earlier.</CardDescription>
+                            </div>
+                            <div className="flex flex-wrap items-center gap-2">
+                                <Input
+                                    placeholder="Search name, email, ID..."
+                                    className="w-52"
+                                    value={search}
+                                    onChange={(e) => setSearch(e.target.value)}
+                                />
+                                <Select value={roleFilter} onValueChange={setRoleFilter}>
+                                    <SelectTrigger className="w-36"><SelectValue /></SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All roles</SelectItem>
+                                        <SelectItem value="admin">Admins</SelectItem>
+                                        <SelectItem value="department">Departments</SelectItem>
+                                        <SelectItem value="student">Students</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Button type="button" variant="outline" size="icon" onClick={loadAccounts} disabled={accountsLoading} title="Refresh">
+                                    <RefreshCw className={`w-4 h-4 ${accountsLoading ? "animate-spin" : ""}`} />
+                                </Button>
+                            </div>
+                        </div>
+                    </CardHeader>
+                    <CardContent>
+                        {accountsError && (
+                            <div className="bg-destructive/15 text-destructive text-sm p-3 rounded-md mb-4 flex items-center gap-2">
+                                <AlertCircle className="w-4 h-4" />
+                                {accountsError}
+                            </div>
+                        )}
+                        {accountsLoading ? (
+                            <div className="flex items-center justify-center py-10 text-muted-foreground">
+                                <Loader2 className="w-5 h-5 mr-2 animate-spin" /> Loading accounts...
+                            </div>
+                        ) : visibleAccounts.length === 0 ? (
+                            <p className="text-center py-10 text-sm text-muted-foreground">No accounts match.</p>
+                        ) : (
+                            <div className="overflow-x-auto">
+                                <Table>
+                                    <TableHeader>
+                                        <TableRow>
+                                            <TableHead>Name</TableHead>
+                                            <TableHead>Email</TableHead>
+                                            <TableHead>Role</TableHead>
+                                            <TableHead>Department / ID</TableHead>
+                                            <TableHead>Status</TableHead>
+                                            <TableHead>Created</TableHead>
+                                            <TableHead>Last sign-in</TableHead>
+                                        </TableRow>
+                                    </TableHeader>
+                                    <TableBody>
+                                        {visibleAccounts.map(a => (
+                                            <TableRow key={a.uid}>
+                                                <TableCell className="font-medium">{a.name || "-"}</TableCell>
+                                                <TableCell className="font-mono text-xs">{a.email}</TableCell>
+                                                <TableCell><Badge variant="outline" className="capitalize">{a.role || "no profile"}</Badge></TableCell>
+                                                <TableCell className="text-sm">{a.department || a.studentId || "-"}</TableCell>
+                                                <TableCell>
+                                                    {!a.hasProfile ? (
+                                                        <Badge variant="destructive">No profile</Badge>
+                                                    ) : !a.active ? (
+                                                        <Badge variant="secondary">Disabled</Badge>
+                                                    ) : a.mustChangePassword ? (
+                                                        <Badge variant="secondary">Awaiting first login</Badge>
+                                                    ) : (
+                                                        <Badge>Active</Badge>
+                                                    )}
+                                                </TableCell>
+                                                <TableCell className="text-sm whitespace-nowrap">{formatDate(a.createdAt)}</TableCell>
+                                                <TableCell className="text-sm whitespace-nowrap">{formatDate(a.lastSignInAt)}</TableCell>
+                                            </TableRow>
+                                        ))}
+                                    </TableBody>
+                                </Table>
+                            </div>
+                        )}
+                    </CardContent>
+                </Card>
             </div>
         </DashboardShell>
     )

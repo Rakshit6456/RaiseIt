@@ -1,7 +1,8 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { useComplaints } from "@/context/ComplaintContext"
+import { useAuth } from "@/context/AuthContext"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import Link from "next/link"
@@ -12,29 +13,8 @@ import {
     ArrowRight,
     Building2,
     Loader2,
-    InboxIcon,
-    ChevronDown
+    InboxIcon
 } from "lucide-react"
-import {
-    Select,
-    SelectContent,
-    SelectItem,
-    SelectTrigger,
-    SelectValue,
-} from "@/components/ui/select"
-
-const DEPARTMENTS = [
-    "Electrical Department",
-    "Plumbing Department",
-    "IT Department",
-    "Hostel Warden",
-    "Infrastructure Team",
-    "Sanitation Team",
-    "Security Office",
-    "Library Administration",
-    "Head of Department",
-    "College Principal",
-]
 
 function timeAgo(date) {
     if (!date) return "Recently"
@@ -61,21 +41,12 @@ const STATUS_BADGE = {
 
 export default function DepartmentDashboard() {
     const { complaints, loading, updateStatus } = useComplaints()
+    const { userData } = useAuth()
     const [resolvingId, setResolvingId] = useState(null)
-    const [dept, setDept] = useState("")
+    // The department is fixed on the account by an administrator; it cannot be switched.
+    const dept = userData?.department || ""
 
-    // Persist selected department across page reloads
-    useEffect(() => {
-        const saved = localStorage.getItem("raiseit_dept")
-        if (saved) setDept(saved)
-    }, [])
-
-    const handleDeptChange = (val) => {
-        setDept(val)
-        localStorage.setItem("raiseit_dept", val)
-    }
-
-    // Filter complaints tagged to selected department
+    // Filter complaints tagged to this account's department
     const myComplaints = dept
         ? complaints.filter(c => c.taggedAuthority === dept)
         : []
@@ -107,7 +78,7 @@ export default function DepartmentDashboard() {
     return (
         <div className="flex flex-col gap-8">
 
-            {/* Header + Department Selector */}
+            {/* Header */}
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                 <div>
                     <div className="flex items-center gap-2 mb-2">
@@ -119,7 +90,7 @@ export default function DepartmentDashboard() {
                                 {dept}
                             </span>
                         ) : (
-                            <span className="text-sm text-muted-foreground italic">No department selected</span>
+                            <span className="text-sm text-muted-foreground italic">No department assigned</span>
                         )}
                     </div>
                     <h1 className="text-3xl font-bold tracking-tight">Department Dashboard</h1>
@@ -128,23 +99,6 @@ export default function DepartmentDashboard() {
                     </p>
                 </div>
                 <div className="flex items-center gap-3">
-                    {/* Department Selector */}
-                    <div className="flex flex-col gap-1">
-                        <label className="text-xs font-semibold text-muted-foreground uppercase tracking-wide ml-0.5">
-                            Viewing as
-                        </label>
-                        <Select value={dept} onValueChange={handleDeptChange}>
-                            <SelectTrigger className="w-52 bg-violet-50 border-violet-200 text-violet-700 font-medium focus:ring-violet-300">
-                                <Building2 className="w-4 h-4 mr-2 shrink-0" />
-                                <SelectValue placeholder="Select department..." />
-                            </SelectTrigger>
-                            <SelectContent>
-                                {DEPARTMENTS.map(d => (
-                                    <SelectItem key={d} value={d}>{d}</SelectItem>
-                                ))}
-                            </SelectContent>
-                        </Select>
-                    </div>
                     <Button asChild className="rounded-full bg-violet-600 hover:bg-violet-700 shadow-lg shadow-violet-500/20 self-end">
                         <Link href="/department/profile">
                             Performance <ArrowRight className="ml-2 w-4 h-4" />
@@ -157,9 +111,9 @@ export default function DepartmentDashboard() {
             {!dept && (
                 <div className="text-center py-20 border-2 border-dashed border-violet-200 rounded-2xl bg-violet-50/30">
                     <Building2 className="w-16 h-16 text-violet-300 mx-auto mb-4" />
-                    <h3 className="text-lg font-semibold text-violet-700">Select Your Department</h3>
+                    <h3 className="text-lg font-semibold text-violet-700">No Department Assigned</h3>
                     <p className="text-sm text-muted-foreground mt-1 max-w-sm mx-auto">
-                        Use the dropdown above to choose your department and view assigned complaints.
+                        Your account has no department yet. Ask an administrator to assign one.
                     </p>
                 </div>
             )}

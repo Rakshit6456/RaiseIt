@@ -1,0 +1,83 @@
+rules_version = '2';
+
+// RaiseIt Firestore rules.
+//
+// Accounts and profiles are created and changed only by the server (Admin SDK,
+// which bypasses these rules): /api/admin/users, /api/auth/*, and scripts/.
+// The browser can never create a user, change a role or change a department.
+//
+// Roles come from the `role` custom claim, which the server mirrors from the
+// profile at login. `mustChangePassword` blocks all data access until the user
+// has replaced their temporary password.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function hasSession() {
+      return request.auth != null;
+    }
+    function isReady() {
+      return hasSession() && request.auth.token.get('mustChangePassword', false) != true;
+    }
+    function role() {
+      return request.auth.token.get('role', '');
+    }
+    function isAdmin() {
+      return isReady() && role() == 'admin';
+    }
+    function isDepartment() {
+      return isReady() && role() == 'department';
+    }
+    function myDepartment() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.department;
+    }
+
+    // Profiles: read your own (admins can read all). Never writable from the client.
+    match /users/{userId} {
+      allow read: if hasSession() && (request.auth.uid == userId || isAdmin());
+      allow write: if false;
+    }
+
+    match /complaints/{complaintId} {
+      function changedKeys() {
+        return request.resource.data.diff(resource.data).affectedKeys();
+      }
+      // A voter may add or remove only their own uid.
+      function onlyOwnVoteChanged() {
+        let before = resource.data.get('upvotes', []).toSet();
+        let after = request.resource.data.upvotes.toSet();
+        return after.difference(before).hasOnly([request.auth.uid])
+            && before.difference(after).hasOnly([request.auth.uid]);
+      }
+      function addsOneComment() {
+        return request.resource.data.comments.size() == resource.data.get('comments', []).size() + 1;
+      }
+
+      allow read: if isReady();
+
+      // Complaints are created and merged by /api/complaints (identity verified, AI
+      // check, duplicate merge, daily limit). Nothing is created or deleted here.
+      allow create, delete: if false;
+
+      allow update: if isReady() && (
+        // Anyone signed in: upvote / un-upvote
+        (changedKeys().hasOnly(['upvotes']) && onlyOwnVoteChanged())
+        // Anyone signed in: add one comment
+        || (changedKeys().hasOnly(['comments']) && addsOneComment())
+        // The reporter: leave feedback on their own complaint
+        || (changedKeys().hasOnly(['feedback']) && resource.data.userId == request.auth.uid)
+        // A department: work only on complaints tagged to its own department
+        || (isDepartment()
+            && resource.data.get('taggedAuthority', '') == myDepartment()
+            && changedKeys().hasOnly(['status', 'resolutionNotes', 'timeline', 'priority', 'stage', 'adminComments']))
+        // Admin: any complaint
+        || (isAdmin()
+            && changedKeys().hasOnly(['status', 'resolutionNotes', 'timeline', 'priority', 'stage', 'adminComments']))
+      );
+    }
+
+    // Server-only bookkeeping for the daily submission limit.
+    match /complaintSubmissions/{submissionId} {
+      allow read, write: if false;
+    }
+  }
+}

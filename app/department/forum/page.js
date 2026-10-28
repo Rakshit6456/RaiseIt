@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect } from "react"
+import { useState, useMemo } from "react"
 import { useComplaints } from "@/context/ComplaintContext"
 import { useAuth } from "@/context/AuthContext"
 import { ForumThreadCard } from "@/components/forum/ForumThreadCard"
@@ -25,12 +25,8 @@ export default function DepartmentForum() {
     const [sortBy, setSortBy] = useState("hot")
     const [categoryFilter, setCategoryFilter] = useState("all")
     const [showOnlyMine, setShowOnlyMine] = useState(false)
-    const [dept, setDept] = useState("")
-
-    useEffect(() => {
-        const saved = localStorage.getItem("raiseit_dept")
-        if (saved) setDept(saved)
-    }, [])
+    // Fixed on the account by an administrator.
+    const dept = userData?.department || ""
 
     const filteredComplaints = useMemo(() => {
         return complaints

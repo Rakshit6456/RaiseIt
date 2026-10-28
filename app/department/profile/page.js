@@ -1,6 +1,6 @@
 "use client"
 
-import { useMemo, useState, useEffect } from "react"
+import { useMemo } from "react"
 import { useAuth } from "@/context/AuthContext"
 import { useComplaints } from "@/context/ComplaintContext"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
@@ -145,13 +145,8 @@ function getMonthLabel(date) {
 export default function DepartmentProfilePage() {
     const { userData, currentUser } = useAuth()
     const { complaints, loading } = useComplaints()
-    const [dept, setDept] = useState("")
-
-    // Read from localStorage (same as dashboard)
-    useEffect(() => {
-        const saved = localStorage.getItem("raiseit_dept")
-        if (saved) setDept(saved)
-    }, [])
+    // Fixed on the account by an administrator.
+    const dept = userData?.department || ""
 
     // Filter complaints tagged to this department
     const myComplaints = useMemo(() =>
